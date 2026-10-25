@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 一键演示：在一个新文件夹里，用模拟出图 / 模拟出片（不联网、不花钱）从建卡跑到审核页。
+# 一键演示：在一个新文件夹里，拿姜澜（华服）当人物真源，建一张「姜澜站立释放法术」的卡，
+# 用模拟出图 / 模拟出片（不联网、不花钱）从建卡跑到审核页；接上真供应商后同一张卡就出真图。
 #   bash 一键演示.sh [项目文件夹，默认 ./演示项目]
 # 包里有哪个 Skill 就演示哪个：只有生图、只有视频、两个都有，都行。
 set -euo pipefail
@@ -26,12 +27,14 @@ PY
 }
 
 if [ $have_img = 1 ]; then
-  echo "▶ 生图：建项目、建卡、模拟出 2 张"
+  echo "▶ 生图：建项目、登记姜澜真源、建卡「姜澜释法」、模拟出 2 张"
   pl init >/dev/null
   edit project.yaml 'd["library"] = {"kind": "local", "root": "素材库"}'
-  pl new-card 01-01 城门初见 >/dev/null
+  mkdir -p refs/姜澜 && cp "$KIT/演示素材/姜澜_华服.jpg" refs/姜澜/clean.jpg
+  printf 'characters:\n  姜澜:\n    source: refs/姜澜/clean.jpg\n' > sources.yaml
+  pl new-card 01-01 姜澜释法 >/dev/null
   card="$(ls cards/01-01_*.yaml)"
-  edit "$card" 'd.pop("characters", None); d["action"] = "A traveller in a grey cloak stops at an old city gate at dawn, looking up at the banners."'
+  edit "$card" 'd.update(outfit="华服", aspect="1024x1536", characters=[{"name": "姜澜", "expression": "calm and focused"}], action="Full-body shot. She stands upright, one hand raised at chest height, releasing a spell: frost-blue light and white petals spiral out of her palm, the magic wind lifting her veil and wide sleeves.")'
   pl validate 01-01 | tail -1
   pl compose 01-01 | tail -1
   pl generate 01-01 --budget 2 --approved "演示：01-01 出 2 张" | tail -1
@@ -51,8 +54,8 @@ if [ $have_vid = 1 ]; then
     ffmpeg -loglevel error -f lavfi -i "color=c=0x8a9bb0:s=1280x720" -frames:v 1 首帧.png
     first="首帧.png"
   fi
-  v new-card 01-01 城门初见 --first-frame "$first" >/dev/null
-  edit "$(ls video-cards/01-01_*.yaml)" 'd["motion"] = "Slow push-in toward the gate; the traveller lifts his gaze, cloak moving in the wind."'
+  v new-card 01-01 姜澜释法 --first-frame "$first" >/dev/null
+  edit "$(ls video-cards/01-01_*.yaml)" 'd["motion"] = "Slow push-in; she raises her hand and the spell light swirls brighter, veil and sleeves rising in the magic wind."'
   v validate 01-01 | head -1
   v generate 01-01 --budget 1 --approved "演示：01-01 出 1 条" | tail -2
 fi
@@ -61,4 +64,12 @@ echo
 echo "✓ 演示项目在 $DEMO"
 [ $have_img = 1 ] && echo "  生图审核页：python3 \"$IMG/scripts/review_web.py\" --config \"$DEMO/project.yaml\" --port 8860   → 打开 http://127.0.0.1:8860 ，在出图区点「要 / 不要」"
 [ $have_vid = 1 ] && echo "  视频审片页：python3 \"$VID/scripts/review_web.py\" --config \"$DEMO/project.yaml\" --port 8861   → 打开 http://127.0.0.1:8861 ，看片给结论；然后在项目里跑 sync 取回"
-echo "  模拟出的图是纯色方块、片子是纯色推近，这就对了。接真供应商见各 Skill 的 references/quickstart.md。"
+echo "  模拟出的图是纯色方块、片子是纯色推近，这就对了：姜澜的参考图已经挂在卡上（refs/姜澜/clean.jpg），只差真供应商。"
+if [ $have_img = 1 ]; then
+  echo
+  echo "▶ 出一张真的「姜澜站立释放法术」：接一个兼容 OpenAI 图片接口（/v1/images/edits）的平台"
+  echo "  export IMAGE_BASE_URL=https://你的平台/v1  IMAGE_API_KEY=你的密钥"
+  echo "  把 $DEMO/project.yaml 里 models 下的 main-model 换成平台的模型名，models.default 改成 main-model，然后："
+  echo "  cd \"$DEMO\" && python3 \"$IMG/scripts/pipeline.py\" --config project.yaml generate 01-01 --budget 1 --approved \"你的名字 批出 1 张\""
+  echo "  别的接法（chat 接口、任意命令行）见 image-card-pipeline/references/quickstart.md"
+fi
