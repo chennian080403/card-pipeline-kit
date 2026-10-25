@@ -31,7 +31,7 @@ python3 card-core/export.py <输出目录> [--zip]      # 出 card-pipeline-kit-
 ```
 
 和这里用的是同一份代码，不分叉。导出时去掉：`profiles/`（本机接入档案）、`roles.md`（本机 AI 分工）、
-`changelog.md`（个人决定记录，换成一份 v1.0 的）、`.git`、`kit/` 和导出脚本本身；内部版本号（契约 v1.x、card-core 1.x）统一改成 v1.0。
+`changelog.md`（个人决定记录，换成一份 v1.0 的）、`.git`、`kit/`、导出和发布脚本本身；内部版本号（契约 v1.x、card-core 1.x）统一改成 v1.0。
 最后扫一遍有没有本机专属的名字（路径、人名、端口、AI 工具名），有就报错不出包。
 **本机专属的东西只往 `profiles/` 和 `roles.md` 里放**，导出就自动干净。
 
