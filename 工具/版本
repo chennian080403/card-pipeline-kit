@@ -1,0 +1,44 @@
+#!/bin/zsh
+# 版本：给 git 套的中文壳。在项目根目录里用。
+#   版本 存 "说明"              把现在的样子存成一个版本
+#   版本 历史                   列出所有版本（编号 时间 说明），最新的在最下面
+#   版本 差异 <编号>            看这个版本改了哪些文件、改了什么
+#   版本 撤销 <编号>            撤销这个版本做的改动，之后的版本保留
+#   版本 回退 <编号>            把所有文件恢复成这个版本的样子（会存成一个新版本，不丢历史）
+#   版本 取 <编号> <文件> <另存为>   把这个版本里的某个文件另存出来，不动现行文件
+cmd=${1:-}; (( $# )) && shift
+[[ -z $cmd || $cmd == 帮助 ]] && { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+top=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "这里不是有版本的项目（不是 git 仓库）"; exit 1; }
+cd "$top"
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.quotepath GIT_CONFIG_VALUE_0=false  # 中文路径不转义，只对本次生效
+case $cmd in
+  存)
+    git add -A
+    if git diff --cached --quiet; then echo "没有改动，不用存"; exit 0; fi
+    git -c user.name=AI -c user.email=ai@local commit -qm "${1:-未写说明}"
+    echo "已存：$(git log -1 --format='%h %s')" ;;
+  历史)
+    git rev-parse -q --verify HEAD >/dev/null || { echo "还没有版本（先「版本 存」一次）"; exit 0; }
+    git log --reverse --date=format:'%m-%d %H:%M' --format='%h  %ad  %s' ;;
+  差异)
+    [[ -n $1 ]] || { echo "用法：版本 差异 <编号>"; exit 1; }
+    git show --stat --format='版本 %h：%s' "$1"; echo; git show --format= "$1" | head -300 ;;
+  撤销)
+    [[ -n $1 ]] || { echo "用法：版本 撤销 <编号>"; exit 1; }
+    if git -c user.name=AI -c user.email=ai@local revert --no-edit "$1" >/dev/null 2>&1; then
+      git -c user.name=AI -c user.email=ai@local commit --amend -qm "撤销 $1"
+      echo "已撤销 $1：$(git log -1 --format='%h %s')"
+    else
+      git revert --abort 2>/dev/null
+      echo "撤销 $1 时和之后的改动冲突，没撤销。请用「版本 差异 $1」看它改了什么，手动改回去，再「版本 存」。"; exit 1
+    fi ;;
+  回退)
+    [[ -n $1 ]] || { echo "用法：版本 回退 <编号>"; exit 1; }
+    git checkout "$1" -- . && git add -A
+    git -c user.name=AI -c user.email=ai@local commit -qm "回退到 $1" && echo "已回退到 $1" ;;
+  取)
+    [[ $# -eq 3 ]] || { echo "用法：版本 取 <编号> <文件> <另存为>"; exit 1; }
+    mkdir -p "$(dirname "$3")"; git show "$1:$2" > "$3" && echo "已另存：$3" ;;
+  *)
+    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

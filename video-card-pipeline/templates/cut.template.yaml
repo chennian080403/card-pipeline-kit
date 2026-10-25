@@ -1,0 +1,23 @@
+# 剪辑单 —— 把选定的条拼成一幕/一部。`vpipeline.py assemble <本文件名>`
+title: 第一幕
+group: ''
+width: 1920
+height: 1080
+fps: 24
+crossfade: 0.8                 # 镜间叠化秒数
+transition: fade
+fade_in: 0.6
+fade_out: 1.5
+music:                         # 可删
+  file: music/theme.mp3        # 相对项目根
+  start: 0
+  volume: 1.0
+  fade_in: 1.0
+  fade_out: 2.5
+font: PingFang SC
+shots:
+  - card: 01-01                # 用这张卡 pick 的第一条；或 take: <条名>；或 file: <路径>
+    in: 0
+    out: 4.5
+    subtitle: {text: 落花时节又逢君, at: 0.8, dur: 2.5}
+  - card: 01-02

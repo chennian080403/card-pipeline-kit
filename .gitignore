@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.DS_Store
+演示项目/
+*.zip

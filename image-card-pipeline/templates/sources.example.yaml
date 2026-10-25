@@ -1,0 +1,13 @@
+# 真源登记表 —— 换真源只改这一行，所有 lean 卡跟着走。
+# 路径相对项目根（config 里的 project.root），也可以是 http(s) URL。
+# 每个角色可带 face：派生出的脸部放大图，lean 模式下会一起送去当参考。
+characters:
+  hero:
+    source: refs/hero/clean.png
+    face: refs/hero/face.png
+  partner:
+    source: refs/partner/clean.png
+
+props:
+  hero/sword:
+    source: refs/props/sword.png

@@ -1,0 +1,10 @@
+# 真源登记表 —— 与 image-card-pipeline 共用同一份格式。
+# 生图那边 promote 写进来；视频这边只读。单独用视频时手写也行。
+characters:
+  hero:
+    source: refs/hero/clean.png
+    face: refs/hero/face.png
+props:
+  hero/sword:
+    source: refs/props/sword.png
+styles: {}

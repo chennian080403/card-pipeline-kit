@@ -1,0 +1,20 @@
+# 重绘卡：拿一张已有的图，只改一处，其余一律照原图（改表情、换衣服颜色、换背景人物……）。
+# 不改图的话用普通卡（new-card 不带 --kind）。字段说明见 references/card-schema.md「重绘卡」。
+id: __ID__
+title: __TITLE__
+kind: rerender
+pack: ''                  # 资产包 大包/小包/子包；空则自动推断
+group: ''
+aspect: 1024x1024         # 一般跟底图一致
+base: ''                  # 要改的那张图：路径，或候选名（如 01-01_main_1）；它固定当 Image 1。空则用第一张参考图
+characters:               # 可选：写了 expression 就只改表情
+  - name: ''
+    expression: ''
+keep: ''                  # 保持不变的（英文）：脸、服装、构图、光线、画风……
+change: ''                # 只改这一处（英文），写得越具体越好
+hard_rules: []            # 额外硬规则（英文句）
+
+# ---- 以下由流水线记录（状态 / 反馈 / 来源），不用手改 ----
+status: draft
+created: __DATE__
+slug: __SLUG__

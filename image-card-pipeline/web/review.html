@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>审核与素材库</title>
+<style>
+:root {
+  --bg: #eef1f5; --panel: #ffffff; --panel-2: #f3f5f8; --line: #dfe3ea;
+  --text: #20232a; --muted: #687180; --accent: #6b4fd8; --accent-soft: #ece7fb;
+  --ok: #2f7a4b; --ok-soft: #e1f0e6; --warn: #9a6a12; --warn-soft: #f5ecd6;
+  --bad: #a3322a; --bad-soft: #f6dfdc; --shadow: 0 5px 20px rgba(30,41,59,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a; --panel: #1c1f24; --panel-2: #23272e; --line: #31353d;
+    --text: #e8eaee; --muted: #9aa1ad; --accent: #a08cf0; --accent-soft: #2c2645;
+    --ok: #6cc48d; --ok-soft: #1f3327; --warn: #e0b45a; --warn-soft: #362d19;
+    --bad: #ec7d72; --bad-soft: #3b2220; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --panel: #1c1f24; --panel-2: #23272e; --line: #31353d;
+  --text: #e8eaee; --muted: #9aa1ad; --accent: #a08cf0; --accent-soft: #2c2645;
+  --ok: #6cc48d; --ok-soft: #1f3327; --warn: #e0b45a; --warn-soft: #362d19;
+  --bad: #ec7d72; --bad-soft: #3b2220; --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif; }
+header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 20px; background: var(--panel);
+  border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 19px; margin: 0; }
+header small { color: var(--muted); }
+header .spacer { flex: 1; }
+button { font: inherit; }
+.b { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 6px 12px;
+  font-size: 13px; cursor: pointer; }
+.b:hover { border-color: var(--muted); }
+.b.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.b.ok.on { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.b.warn.on { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.b.bad.on { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+.b[data-want].on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); font-weight: 600; }
+.b[data-want].flash { animation: want-flash .35s ease-out; }   /* 按 S 切到的那个闪一下 */
+@keyframes want-flash { from { background: var(--accent); color: #fff; transform: scale(1.08); } }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: calc(100vh - 62px); }
+aside { border-right: 1px solid var(--line); padding: 14px 10px; background: var(--panel); position: sticky; top: 62px;
+  height: calc(100vh - 62px); overflow-y: auto; }
+.nav-group { margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.nav-group:last-child { border: 0; }
+.nav-head { display: flex; justify-content: space-between; width: 100%; border: 0; background: none; color: var(--text);
+  font-weight: 600; padding: 7px 10px; border-radius: 8px; cursor: pointer; text-align: left; }
+.nav-head .tip { font-weight: 400; color: var(--muted); font-size: 12px; }
+.nav-sub { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: none; color: var(--muted);
+  padding: 6px 10px 6px 22px; border-radius: 8px; cursor: pointer; text-align: left; font-size: 13px; }
+.nav-sub.deep { padding-left: 36px; font-size: 12.5px; }
+.nav-head:hover, .nav-sub:hover { background: var(--panel-2); }
+.nav-head.active, .nav-sub.active { background: var(--accent-soft); color: var(--accent); }
+.count { font-size: 11px; color: var(--muted); background: var(--panel-2); border-radius: 999px; padding: 0 7px; align-self: center; }
+.active .count { background: var(--panel); color: var(--accent); }
+main { padding: 18px 22px 40px; min-width: 0; }
+.summary { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.summary h2 { font-size: 18px; margin: 0; }
+.hint { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; max-width: 900px; }
+.filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.chip { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: 3px 11px; font-size: 12px; cursor: pointer; }
+.chip.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+.list .item.kb { box-shadow: 0 0 0 2px var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;
+  cursor: pointer; box-shadow: var(--shadow); transition: transform .08s; }
+.card:hover { transform: translateY(-1px); border-color: var(--muted); }
+.card[data-v="pass"] { border-color: #88b79b; } .card[data-v="fail"] { border-color: #daa399; }
+.card[data-v="fail"] .media { opacity: .65; }
+.card.kb, .folder.kb { box-shadow: 0 0 0 3px var(--accent); }
+.nav-head.kb, .nav-sub.kb { box-shadow: inset 0 0 0 2px var(--accent); }
+.media { aspect-ratio: 1; background: var(--panel-2); display: flex; align-items: center; justify-content: center; }
+.media.alpha { background: repeating-conic-gradient(var(--panel-2) 0 25%, var(--panel) 0 50%) 0 0/14px 14px; }
+.media img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.card-info { padding: 9px 11px 11px; display: flex; flex-direction: column; gap: 4px; }
+.card-info .t { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-info .m { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); white-space: nowrap; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); } .badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.bad { background: var(--bad-soft); color: var(--bad); } .badge.acc { background: var(--accent-soft); color: var(--accent); }
+.row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.empty { color: var(--muted); padding: 40px; text-align: center; border: 1px dashed var(--line); border-radius: 12px; }
+.list { display: flex; flex-direction: column; gap: 8px; max-width: 900px; }
+.list .item { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+.list .item pre { margin: 6px 0 0; }
+pre { white-space: pre-wrap; background: var(--panel-2); padding: 10px; border-radius: 8px; font-size: 12px; max-height: 240px; overflow: auto; margin: 0; }
+input, select, textarea { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 9px; min-width: 0; }
+textarea { width: 100%; min-height: 56px; resize: vertical; }
+/* 备注 / 真源描述：平时收成一行，进框（A）按字数撑开，Esc / 回车 收起 */
+textarea.grow { min-height: 0; resize: none; overflow: hidden; box-sizing: border-box; display: block; }
+textarea.grow:focus { overflow-y: auto; }
+dialog { border: 0; padding: 0; border-radius: 14px; width: min(1180px, 96vw); max-height: 94vh; background: var(--panel); color: var(--text); }
+dialog::backdrop { background: rgba(10,12,18,.6); }
+.dialog-top { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.dialog-top strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; max-height: calc(94vh - 56px); }
+.viewer { background: #0f1115; display: flex; align-items: center; justify-content: center; min-height: 420px; padding: 10px; }
+.viewer img { max-width: 100%; max-height: calc(94vh - 80px); object-fit: contain; cursor: zoom-in; }
+.details { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.details h4 { margin: 0; font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.details .m { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.box { border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+#d-srcbox.kb { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.hist { display: flex; gap: 6px; flex-wrap: wrap; }
+.hist img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 9px 14px;
+  border-radius: 8px; font-size: 12.5px; max-width: min(640px, 92vw); white-space: pre-wrap; display: none; z-index: 99; }
+#toast.bad { background: var(--bad); color: #fff; }
+.nav-sub.empty-pack { opacity: .45; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 18px; font-weight: 600; }
+.crumbs button { border: 0; background: none; color: var(--accent); font: inherit; padding: 0 2px; cursor: pointer; }
+.crumbs button:hover { text-decoration: underline; }
+.crumbs .sep { color: var(--muted); font-weight: 400; }
+.section-title { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; margin: 4px 0 10px; }
+.folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.folder { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; cursor: pointer; text-align: left;
+  padding: 0; color: var(--text); display: flex; flex-direction: column; box-shadow: var(--shadow); }
+.folder:hover { border-color: var(--muted); }
+.folder.is-empty { opacity: .5; }
+.folder .covers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; height: 86px; overflow: hidden; background: var(--panel-2); }
+.folder .covers img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.folder .covers .none { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
+.folder .f-info { padding: 8px 11px 10px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.folder .f-name { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .f-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); color: var(--muted); padding: 7px 16px; font: inherit; font-size: 13.5px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.line-tip { font-size: 12px; color: var(--muted); max-width: 520px; }
+#menu-toggle { display: none; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  aside { position: static; height: auto; display: none; border-right: 0; border-bottom: 1px solid var(--line); }
+  aside.open { display: block; }
+  #menu-toggle { display: inline-block; }
+  .dialog-layout { grid-template-columns: 1fr; }
+  .viewer { min-height: 260px; }
+  main { padding: 14px 16px 40px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+}
+/* 看大图浮层：盖在当前页面上，点图片以外的任何地方退出 */
+dialog.lb { border: 0; padding: 0; margin: 0; max-width: none; max-height: none; width: 100vw; height: 100vh; background: transparent;
+  display: none; align-items: center; justify-content: center; cursor: zoom-out; }
+dialog.lb[open] { display: flex; }
+dialog.lb::backdrop { background: rgba(0, 0, 0, .78); }
+dialog.lb img { max-width: 94vw; max-height: 90vh; object-fit: contain; border-radius: 6px; box-shadow: 0 12px 48px rgba(0, 0, 0, .5); cursor: default; }
+dialog.lb #lb-cap { position: fixed; left: 0; right: 0; bottom: 14px; text-align: center; color: #ddd; font-size: 13px; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <button class="b" id="menu-toggle">分类</button>
+  <div><h1>审核与素材库</h1><small id="proj"></small></div>
+  <div class="seg" id="line" title="W：短效 / 长效 来回切 · E：切到下一个区（⇧E 上一个）"><button data-line="short">短效 · 定调</button><button data-line="long">长效 · 复用</button></div>
+  <span class="line-tip" id="line-tip"></span>
+  <span class="spacer"></span>
+  <button class="b" id="reload">刷新</button>
+</header>
+<div class="layout"><aside id="nav"></aside><main id="view"></main></div>
+<dialog id="lb" class="lb"><img id="lb-img" alt=""><div id="lb-cap"></div></dialog>
+<dialog id="detail">
+  <div class="dialog-top"><strong id="d-title"></strong>
+    <button class="b" id="d-prev">← 上一项</button><button class="b" id="d-next">下一项 →</button><button class="b" id="d-close">关闭</button>
+    <span class="m" style="font-size:12px" id="d-keys">键盘：← → 切换 · 1 要 · 3 不要（记完跳下一张）· 空格 跳过 · 回车 大图 · Esc / ⌫ 退出</span></div>
+  <div class="dialog-layout"><div class="viewer"><img id="d-img" alt=""></div><div class="details" id="d-body"></div></div>
+</dialog>
+<div id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const isUrl = p => /^https?:/.test(p || "");
+const img = p => !p ? "" : isUrl(p) ? p : `/file?path=${encodeURIComponent(p)}`;
+const VERD = {pass: ["通过", "ok"], borderline: ["待定", "warn"], fail: ["不通过", "bad"]};
+const LIB = {draft: ["草稿", ""], pending: ["待定", "warn"], final: ["定稿", "ok"], rejected: ["放弃", "bad"]};
+// 短效 / 长效是同一个库的两个入口，两边用同一棵资产包树（大包/小包/子包）；文件不搬，只是归类。
+const LINES = {
+  short: {label: "短效 · 定调", tip: "找参考 → 试样 → 喜欢哪张就「定为真源」，送进长效。"},
+  long: {label: "长效 · 复用", tip: "拿定下的真源反复出图，保持一致；出了问题回短效重新定调。"},
+};
+const ZONES = {
+  reference: {line: "short", label: "参考区", tree: true, tip: "找来的参考 / 灵感素材（干净版）。试样时用 --ref 编号。"},
+  trial: {line: "short", label: "试样区", tree: true, tip: "短效草图试出来的样子（剑长什么样、画风选哪种）。喜欢哪张就点开「定为真源」；不要的进废稿区。"},
+  // 长效顺序：出图 → 素材 → 真源 → 废稿。提示词模板和沉淀记录并进真源区（真源只分「图」和「字」）
+  review: {line: "long", label: "出图区 · 审成品", tree: true, tip: "镜头卡出的图。每张只问一件事：要（进素材区）还是不要（进废稿区）；拿不准就先不点。喜欢它的长相 / 画风 / 氛围 / 构图，点开「定为真源」。"},
+  assets: {line: "long", label: "素材区", tree: true, tip: "点了「要」的图，最后用进片子里的成品。进来是草稿，你点「定稿」才算定稿。素材不是真源。定稿就是定下关键帧（关键的参考图）：视频要求只认定稿时，视频卡的关键帧只能用定稿图；正被视频卡用着的标「关键帧」。点开：1 定稿 · 2 移回原处（回出图区 / 试样区，变回未审）· 3 丢弃进废稿区。"},
+  sources: {line: "long", label: "真源区", tree: true, tip: "以后出图要照着来的东西，只分两种：「图」（长相、画风、氛围的样张，画风 / 氛围还带一段描述）和「字」（构图模板）。一个名字只认一张，换了引用它的卡都跟着变，旧的进历史；「记录」里是每次定真源的账。点开：2 移回素材区（撤掉这次定真源，有旧版就换回旧版；原图回素材区，草图回试样区）· 3 撤掉真源、原图进废稿区。"},
+  // 废稿只放一处：试样和出图标了不通过的都在这里，图上标「草图 / 成品」
+  rejects: {line: "long", label: "废稿区", tree: true, tip: "点了「不要」的图都在这里，按原来的包放，图上标着「草图」或「成品」。点开：1 要（进素材区）· 2 移回原位（回出图区 / 试样区，变回未审）。"},
+};
+const firstZone = line => Object.keys(ZONES).find(g => ZONES[g].line === line);
+let srcTab = "图";   // 真源区的页签：图 / 字 / 记录
+let S = null, nav = {group: "review", path: ""}, filter = "all", flat = false, list = [], cur = -1, openFirst = null;
+try { const u = new URL(location.href);
+  if (u.searchParams.get("group")) nav.group = {library: "assets", trial_rejects: "rejects"}[u.searchParams.get("group")] || u.searchParams.get("group");
+  if (u.searchParams.get("line") && !u.searchParams.get("group")) nav.group = firstZone(u.searchParams.get("line")) || nav.group;
+  if (u.searchParams.get("group") === "log") srcTab = "记录";
+  if (u.searchParams.get("group") === "prompts") srcTab = "字";
+  if (!ZONES[nav.group]) nav.group = {log: "sources", prompts: "sources"}[nav.group] || "review";
+  nav.path = u.searchParams.get("path") || ""; openFirst = u.searchParams.get("open"); } catch (e) {}
+
+let reopenKey = "";   // load() 换 list 之前正看着的那张：等数据期间人可能已经翻过页，刷新后要回到这张，而不是发请求时那张
+async function load() {
+  S = await (await fetch("/api/state")).json();
+  reopenKey = keyOf(list[cur]);
+  $("proj").textContent = `${S.project} · 大包 → 小包 → 子包 · 短效长效同一棵树`;
+  render();
+  if (openFirst !== null) { openAt(+openFirst || 0); openFirst = null; }
+}
+// 同一张图的身份（筛选「未审」时，审完的图会离开列表，靠它找回位置）
+const keyOf = it => it ? `${it.type}|${it.card ? it.card.id : ""}|${it.x ? it.x.name : it.file}` : "";
+// done：成功时改弹这句（写清哪张图去了哪个区，防看错）；失败照旧弹后端原话
+async function post(url, body, done) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json(); if (j.ok && done) toast(done, false, 5000); else toast(j.output || (j.ok ? "完成" : "失败"), !j.ok);
+  await load();   // 失败也刷新：撤掉页面上先亮起的按钮
+  if ($("detail").open) redrawDetail();
+  return j;
+}
+// 刷新后重画详情：回到正看着的那张；列表空了（审完最后一张）就关掉详情和从详情开的大图。
+// 人正在详情里的框里打字时，保住焦点、光标和框里还没存的字（不然焦点丢了，后面打的字会漏成快捷键）
+function redrawDetail() {
+  if (!list.length) { if ($("lb").open && lbFromDetail) $("lb").close(); $("detail").close(); return; }
+  const k = reopenKey, a = document.activeElement;
+  const typingIn = a && a.id && ["TEXTAREA", "INPUT", "SELECT"].includes(a.tagName) && $("d-body").contains(a)
+    ? {id: a.id, value: a.value, start: a.selectionStart, end: a.selectionEnd, session: noteSession} : null;
+  const n = list.findIndex(i => keyOf(i) === k);
+  openAt(n >= 0 ? n : Math.min(cur, list.length - 1), true);
+  const box = typingIn && keyOf(list[cur]) === k && $(typingIn.id);   // 换成别的图了就不往它的框里填
+  if (box) {
+    box.value = typingIn.value; box.focus();
+    try { box.setSelectionRange(typingIn.start, typingIn.end); } catch (e) {}   // select 之类没有光标
+    if (typingIn.id === "d-note") noteSession = typingIn.session;   // 重新聚焦不算新的一次编辑
+  }
+  if ($("lb").open && lbFromDetail && list[cur]) lightbox([{file: list[cur].file, cap: list[cur].title}], 0);   // 大图跟着换到新的当前图
+}
+function toast(msg, bad, ms) { const t = $("toast"); t.textContent = msg; t.className = bad ? "bad" : ""; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms || (bad ? 7000 : 3200)); }
+const picName = f => (f || "").split("/").pop().replace(/\.[^.]+$/, "");   // s-剑_sunburst_2：同包几张只差 _1 / _2，提示里带上
+const homeOf = card => card.startsWith("s-") ? "试样区" : "出图区";
+
+// ---------------- data -> items (every item carries .pack) ----------------
+const shortName = f => f.split("/").pop().replace(/^[0-9a-f]{8}_/, "").replace(/\.[^.]+$/, "");
+function candidates() {
+  return S.cards.flatMap(c => c.candidates.map(x => ({type: "cand", card: c, x, pack: c.pack, title: c.title || c.id, file: x.file, alpha: x.alpha})));
+}
+const isSketch = i => i.card.kind === "sketch";
+function zoneItems(g) {
+  // 移动而不是复制：登记进素材区的图，试样区 / 出图区不再显示；素材区可移回原处或丢弃
+  if (g === "trial") return candidates().filter(i => isSketch(i) && i.x.verdict !== "fail" && !i.x.registered);
+  if (g === "review") return candidates().filter(i => !isSketch(i) && i.x.verdict !== "fail" && !i.x.registered);
+  if (g === "rejects") return candidates().filter(i => i.x.verdict === "fail");
+  if (g === "assets") return S.library.entries.map(e => ({type: "lib", e, pack: e.pack, title: e.title, file: e.file}));
+  if (g === "sources") return S.sources.map(s => ({type: "src", s, pack: s.pack, title: s.name, file: s.exists ? s.source : ""}));
+  if (g === "reference") return S.inspiration.map(i => ({type: "insp", i, pack: i.pack, title: shortName(i.file), file: i.file}));
+  return [];
+}
+const pathOf = it => it.pack.join("/");
+const under = (it, path) => !path || pathOf(it) === path || pathOf(it).startsWith(path + "/");
+// children of a pack node: [{name, path, items}] ; level 1 always lists the configured 大包 even when empty
+function children(items, path) {
+  const depth = path ? path.split("/").length : 0, map = new Map();
+  if (!path) S.categories.forEach(c => map.set(c, []));
+  for (const it of items) {
+    if (!under(it, path) || it.pack.length <= depth) continue;
+    const name = it.pack[depth]; if (!map.has(name)) map.set(name, []); map.get(name).push(it);
+  }
+  return [...map.entries()].map(([name, its]) => ({name, path: path ? `${path}/${name}` : name, items: its}));
+}
+const tplFolder = t => t.id.includes("/") ? t.id.split("/")[0] : "（根）";
+const tplFolders = () => [...new Set(S.templates.map(tplFolder))];
+
+// ---------------- nav ----------------
+// 每个区各记各的停留位置（包 / 页签 / 筛选 / 平铺 / 选中框 / 滚动），W / E 切回来原样回到那里；只记在这次打开的页面里，刷新就清空
+const zonePos = {}, lineLast = {};   // lineLast：每条线最后待的区
+function switchTo(g, path) {   // 去过的区回到原处；没去过的按 path 进，框落在左栏当前这一项上（上下选包）
+  const p = zonePos[g];
+  if (!p) { go(g, path); navToActive(); return; }
+  go(g, p.path); ({filter, flat, srcTab, sel, navSel, zone} = p); render(); window.scrollTo(0, p.y);
+}
+function samePath(g) {   // 同一路径换个区：「人物/主角」→ 那边的「人物/主角」；那边没有这个子包就退到最近的有东西的上级
+  const items = zoneItems(g);
+  let parts = nav.path ? nav.path.split("/") : [];
+  while (parts.length && !items.some(it => under(it, parts.join("/")))) parts.pop();
+  return parts.join("/");
+}
+function go(group, path) {
+  if (S && group !== nav.group) { zonePos[nav.group] = {path: nav.path, filter, flat, srcTab, sel, navSel, zone, y: scrollY}; lineLast[ZONES[nav.group].line] = nav.group; }
+  nav = {group, path: path || ""}; filter = "all"; flat = false; sel = null;
+  try { const u = new URL(location.href); u.searchParams.set("group", group); u.searchParams.delete("line"); path ? u.searchParams.set("path", path) : u.searchParams.delete("path");
+    u.searchParams.delete("cat"); u.searchParams.delete("sub"); history.replaceState(null, "", u); } catch (e) {}
+  $("nav").classList.remove("open"); render(); window.scrollTo(0, 0);
+}
+function navBtn(cls, g, path, label, n, depth) {
+  const active = nav.group === g && nav.path === (path || "");
+  const pad = depth ? ` style="padding-left:${10 + depth * 13}px"` : "";
+  return `<button class="${cls}${active ? " active" : ""}${n ? "" : " empty-pack"}" data-g="${g}" data-p="${esc(path || "")}"${pad}><span>${esc(label)}</span><span class="count">${n}</span></button>`;
+}
+function navTree(g, items, path, depth) {
+  let h = "";
+  for (const ch of children(items, path)) {
+    h += navBtn("nav-sub", g, ch.path, ch.name, ch.items.length, depth);
+    const open = nav.group === g && (nav.path === ch.path || nav.path.startsWith(ch.path + "/"));
+    if (open) h += navTree(g, items, ch.path, depth + 1);
+  }
+  return h;
+}
+function renderNav() {
+  const line = ZONES[nav.group].line;
+  document.querySelectorAll("#line [data-line]").forEach(b => b.classList.toggle("on", b.dataset.line === line));
+  $("line-tip").textContent = LINES[line].tip;
+  let h = "";
+  for (const [g, z] of Object.entries(ZONES)) {
+    if (z.line !== line) continue;
+    if (z.tree) {
+      const items = zoneItems(g);
+      h += `<div class="nav-group">${navBtn("nav-head", g, "", z.label, items.length + (g === "sources" ? S.templates.length : 0))}`;
+      if (nav.group === g) h += navTree(g, items, "", 1);
+      h += `</div>`;
+    }
+  }
+  $("nav").innerHTML = h;
+  $("nav").querySelectorAll("[data-g]").forEach(b => b.onclick = () => go(b.dataset.g, b.dataset.p));
+  if (zone === "nav") navSel = navBtns().findIndex(b => b.classList.contains("active"));   // 亮框由 render() 画完右边后统一标
+}
+
+// ---------------- main view ----------------
+function crumbs() {
+  const parts = nav.path ? nav.path.split("/") : [];
+  let h = `<span class="sep" style="font-weight:600">${esc(LINES[ZONES[nav.group].line].label.split(" ")[0])}</span><span class="sep">›</span><button data-cp="">${esc(ZONES[nav.group].label)}</button>`;
+  parts.forEach((p, n) => h += `<span class="sep">›</span><button data-cp="${esc(parts.slice(0, n + 1).join("/"))}">${esc(p)}</button>`);
+  return `<div class="crumbs">${h}</div>`;
+}
+function badgeFor(it) {
+  if (it.type === "cand") {   // 新规则只有 要 / 不要；以前点过的「通过 / 待定」标成「旧·…」留给人决定
+    const v = it.x.verdict, old = {pass: "旧·通过", borderline: "旧·待定"}[v];
+    return `${nav.group === "rejects" ? `<span class="badge${isSketch(it) ? " acc" : ""}">${isSketch(it) ? "草图" : "成品"}</span><span class="badge bad">不要</span>` : ""}${old ? `<span class="badge ${VERD[v][1]}">${old}</span>` : v ? "" : `<span class="badge">未审</span>`}${it.x.registered ? `<span class="badge ok">已进素材区</span>` : ""}`; }
+  if (it.type === "src") return `<span class="badge acc">真源 · ${esc(it.s.look || it.s.label)}</span>${it.s.text && !it.s.prompt && (it.s.look || it.s.section !== "styles") ? `<span class="badge warn">待补描述</span>` : ""}${it.s.exists ? "" : `<span class="badge bad">文件缺失</span>`}${it.s.history.length ? `<span class="badge">历史 ${it.s.history.length}</span>` : ""}`;
+  if (it.type === "lib") { const [l, c] = LIB[it.e.status] || [it.e.status, ""]; return `<span class="badge">登记</span><span class="badge ${c}">${l}</span>${kfUses(it.e).length ? `<span class="badge acc" title="${esc(kfText(it.e))}">关键帧 · ${kfUses(it.e).length}</span>` : ""}`; }
+  if (it.type === "insp") return (it.i.tags || []).slice(0, 3).map(t => `<span class="badge">${esc(t)}</span>`).join("");
+  return "";
+}
+function metaFor(it) {
+  if (it.type === "cand") return `${esc(it.card.id)} · ${esc(it.x.model)} · ${it.x.width || "?"}×${it.x.height || "?"}`;
+  if (it.type === "src") return it.s.used_by.length ? `被 ${it.s.used_by.length} 张卡引用` : "还没有卡引用";
+  if (it.type === "lib") return `${esc(it.e.id)} · ${esc((it.e.at || "").slice(0, 10))}`;
+  if (it.type === "insp") return esc(it.i.note);
+  return "";
+}
+const REVIEWABLE = ["review", "trial"];
+const applyFilter = items => !REVIEWABLE.includes(nav.group) ? items :
+  items.filter(i => filter === "all" || (filter === "todo" ? !i.x.verdict : !!i.x.verdict));
+function folderTile(ch) {
+  const covers = ch.items.filter(i => i.file).slice(0, 3);
+  const subs = new Set(ch.items.filter(i => i.pack.length > ch.path.split("/").length).map(i => i.pack[ch.path.split("/").length])).size;
+  return `<button class="folder${ch.items.length ? "" : " is-empty"}" data-cp="${esc(ch.path)}">
+    <div class="covers"${covers.length ? ` style="grid-template-columns:repeat(${covers.length},1fr)"` : ""}>${covers.length ? covers.map(i => `<img loading="lazy" src="${img(i.file)}" alt="">`).join("") : `<span class="none">${ch.items.length ? "无图 · 文件缺失" : "空包"}</span>`}</div>
+    <div class="f-info"><span class="f-name" title="${esc(ch.name)}">${esc(ch.name)}</span><span class="f-meta">${subs ? `${subs} 个子包 · ` : ""}${ch.items.length} 张</span></div></button>`;
+}
+function grid(items) {
+  return `<div class="grid">${items.map((it, n) => `
+    <div class="card" data-n="${n}" data-v="${it.type === "cand" ? it.x.verdict : ""}">
+      <div class="media${it.alpha ? " alpha" : ""}">${it.file ? `<img loading="lazy" src="${img(it.file)}" alt="">` : `<span class="m">无图</span>`}</div>
+      <div class="card-info"><div class="t" title="${esc(it.title)}">${esc(it.title)}</div><div class="row">${badgeFor(it)}</div><div class="m">${metaFor(it)}</div></div>
+    </div>`).join("")}</div>`;
+}
+function render() {
+  renderNav();
+  const v = $("view"), z = ZONES[nav.group];
+  let h = `<div class="summary">${crumbs()}</div><p class="hint">${z.tip}</p>`;
+  if (nav.group === "sources") {
+    const T = [["图", `图（${S.sources.length}）`], ["字", `字 · 模板（${S.templates.length}）`], ["记录", `记录（${logShown().length}）`]];
+    h += `<div class="filters">${T.map(([k, l]) => `<button class="chip${srcTab === k ? " on" : ""}" data-tab="${k}">${l}</button>`).join("")}</div>`;
+    const bindTabs = () => v.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { srcTab = b.dataset.tab; render(); });
+    if (srcTab === "记录") {
+      v.innerHTML = h + viewLog(); bindCrumbs(v); bindTabs();
+      // 记录里的图点开全屏看大图；左右键顺着记录切
+      const shots = logShown().map(([p]) => p).filter(p => p.file).map(p => ({file: p.file, cap: `${p.as} ← ${(p.candidate || "").split("/").pop()} · ${p.at}`, p}));
+      v.querySelectorAll("[data-logview]").forEach(e => e.onclick = () => lightbox(shots, shots.findIndex(x => x.p === S.promotions[+e.dataset.logview])));
+      v.querySelectorAll("[data-logprev]").forEach(e => e.onclick = () => { const p = S.promotions[+e.dataset.logprev];
+        lightbox([{file: p.previous_file, cap: `被替换的旧图 · ${p.as} · ${p.previous}`}], 0); });
+      list = []; markSel(false); return;
+    }
+    if (srcTab === "字") { v.innerHTML = h + viewTemplates(); bindCrumbs(v); bindTabs(); list = []; markSel(false); return; }
+    setTimeout(bindTabs);
+  }
+  if (REVIEWABLE.includes(nav.group)) {
+    const F = [["all", "全部"], ["todo", "未审"], ["old", "旧结论"]];
+    h += `<div class="filters">${F.map(([k, l]) => `<button class="chip${filter === k ? " on" : ""}" data-f="${k}">${l}</button>`).join("")}
+      <span style="width:12px"></span><span class="m" style="font-size:12px;align-self:center">键盘：↑↓←→ 选 · 回车进入 / 打开 · Esc 或 ⌫ 退一步 · S 切这排小框 · Q 平铺 · E 切区 · W 短效 / 长效 · Tab / 到头再 ← 切到左栏</span></div>`;
+  }
+  const all = applyFilter(zoneItems(nav.group));
+  const kids = children(all, nav.path).filter(ch => ch.items.length || !nav.path);
+  const here = all.filter(it => under(it, nav.path));
+  const direct = here.filter(it => pathOf(it) === nav.path);
+  if (kids.length) h += `<div class="section-title">${nav.path ? "子包" : "大包"}</div><div class="folders">${kids.map(folderTile).join("")}</div>`;
+  list = flat ? here : direct;
+  if (list.length) h += `<div class="section-title">${flat ? `这里全部 ${here.length} 张` : `这个包里的图（${direct.length}）`}</div>` + grid(list);
+  if (kids.length && here.length > direct.length)
+    h += `<div class="row" style="margin-top:14px"><button class="b" id="flat">${flat ? "收起，只看文件夹（Q）" : `平铺显示这里全部 ${here.length} 张（Q）`}</button></div>`;
+  if (!kids.some(k => k.items.length) && !list.length) h += `<div class="empty">这个包里还没有东西。</div>`;
+  v.innerHTML = h;
+  bindCrumbs(v);
+  v.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { filter = b.dataset.f; render(); });
+  v.querySelectorAll(".card").forEach(c => c.onclick = () => openAt(+c.dataset.n));
+  markSel(false);
+  if ($("flat")) $("flat").onclick = () => { flat = !flat; render(); };
+}
+function bindCrumbs(v) { v.querySelectorAll("[data-cp]").forEach(b => b.onclick = () => go(nav.group, b.dataset.cp)); }
+function viewTemplates() {
+  const pre = t => `<pre style="white-space:pre-wrap;font-size:12px;line-height:1.5;margin:6px 0 0;max-height:220px;overflow:auto">${esc(t)}</pre>`;
+  if (!S.templates.length) return `<div class="empty">还没有模板。在出图区点开一张图 → 定为真源 → 构图。</div>`;
+  return tplFolders().map(f => `<div class="section-title">${esc(f)}</div><div class="list">${S.templates.filter(t => tplFolder(t) === f).map(t => `<div class="item"><div class="row"><b>${esc(t.name)}</b><span class="badge">${esc(t.id)}</span></div>
+    <div class="m" style="color:var(--muted);font-size:12px;margin-top:4px">卡片里写 <code>prompt_templates: [${esc(t.id)}]</code> 引用</div>${t.body ? `<details><summary class="m">看全文</summary>${pre(t.body)}</details>` : ""}</div>`).join("")}</div>`).join("");
+}
+// 记录跟着左栏走：按 as 找到这条真源所在的包；真源已经删掉的（找不到包）只在真源区顶层显示
+const srcAs = s => `${(KINDS().find(k => k.section === s.section) || {}).as || s.section}:${s.name}`;
+function logShown() {
+  const all = S.promotions.map((p, n) => [p, n]);
+  if (!nav.path) return all;
+  const packOf = new Map(S.sources.map(s => [srcAs(s), s.pack]));
+  return all.filter(([p]) => packOf.has(p.as) && under({pack: packOf.get(p.as)}, nav.path));
+}
+function viewLog() {
+  const th = (f, n, tip) => f ? `<img src="${img(f)}" alt="" data-logview="${n}" title="${tip}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none;cursor:zoom-in">` : "";
+  const shown = logShown();
+  return shown.length ? `<div class="list">${shown.map(([p, n]) => `<div class="item"><div class="row" style="align-items:flex-start;gap:12px">${th(p.file, n, "点开看大图")}
+    <div style="flex:1;min-width:0"><b>${esc(p.as)}</b> ${p.action === "describe" ? `<span class="badge">改描述</span>` : p.action === "demote" ? `<span class="badge warn">移回素材区</span>${p.restored ? "（换回上一版）" : "（删掉）"}` : `← ${esc((p.candidate || "").split("/").pop())}`}
+    <div style="color:var(--muted);font-size:12px">${esc(p.at)} · ${esc(p.approved)}${p.previous ? " · 替换了 " + esc(p.previous) : ""}</div>
+    ${p.action === "describe" ? `<div style="font-size:12px;margin-top:4px">${p.text ? esc(p.text) : "<i>清空了描述</i>"}</div>${p.before ? `<details><summary class="m" style="font-size:12px">改之前</summary><div style="font-size:12px">${esc(p.before)}</div></details>` : ""}` : ""}</div>
+    ${p.previous_file ? `<div style="text-align:center;flex:none"><img src="${img(p.previous_file)}" alt="" data-logprev="${n}" title="被替换的旧图，点开看大图" style="width:48px;height:48px;object-fit:cover;border-radius:6px;opacity:.7;cursor:zoom-in"><div class="m" style="font-size:11px">被替换</div></div>` : ""}</div></div>`).join("")}</div>` : `<div class="empty">${nav.path ? "这个包里还没有沉淀记录。" : "还没有沉淀记录。"}</div>`;
+}
+
+// ---------------- detail dialog ----------------
+function openAt(n, keep) {
+  if (!list.length) return;
+  saveNote();   // 切图前把上一张没存的备注存掉
+  cur = (n + list.length) % list.length; const it = list[cur]; srcMode = false;
+  $("d-title").textContent = `${it.title}  (${cur + 1}/${list.length})`;
+  $("d-img").src = img(it.file); $("d-img").onclick = () => { if (it.file) { lightbox([{file: it.file, cap: it.title}], 0); lbFromDetail = true; } };
+  $("d-body").innerHTML = detailBody(it); $("d-keys").textContent = keysFor(it); bindDetail(it);
+  if (!$("detail").open) $("detail").showModal();
+}
+const packBadge = it => `<span class="badge">${esc(it.pack.join(" / "))}</span>`;
+function allPackPaths() {
+  const out = new Set();
+  for (const g of Object.keys(ZONES).filter(g => ZONES[g].tree)) for (const it of zoneItems(g)) it.pack.forEach((_, n) => out.add(it.pack.slice(0, n + 1).join("/")));
+  S.categories.forEach(c => out.add(c));
+  return [...out].sort();
+}
+// 英文的灵感 / 提示词是给 AI 看的：收进详情最底下一个默认折叠的块，不占人看的地方
+function aiFold(c, x) {
+  const sent = x.sent_prompt || c.prompt;
+  if (!c.idea && !sent) return "";
+  return `<details style="margin-top:4px"><summary class="m">给 AI 看的 · 英文提示词（默认收起）</summary>
+    ${c.idea ? `<h4 style="margin-top:8px">卡里写的这张要什么</h4><pre style="white-space:pre-wrap;margin-top:4px">${esc(c.idea)}</pre>` : ""}
+    ${sent ? `<h4 style="margin-top:8px">${x.sent_prompt ? "这张图实际发出去的提示词" : "卡片当前的提示词"}（${sent.length} 字）</h4><pre style="white-space:pre-wrap;margin-top:4px">${esc(sent)}</pre>` : ""}</details>`;
+}
+// 沉淀前先看同名真源：有就把要被换掉的那张摆出来
+// 真源种类来自 project.yaml 的 sources.kinds；默认 人物 / 道具 / 风格
+const KINDS = () => S.kinds || [{section: "characters", label: "人物", as: "character", text: false}, {section: "props", label: "道具", as: "prop", text: false}, {section: "styles", label: "风格", as: "style", text: true}];
+const kindOf = as => KINDS().find(k => k.as === as);
+const sameSource = (kind, name) => S.sources.find(s => s.section === (kindOf(kind) || {}).section && s.name === name);
+function showConflict() {
+  const box = $("d-conflict"); if (!box) return;
+  const kind = $("d-as").value, name = $("d-name").value.trim();
+  if (kind === "template") { box.innerHTML = S.templates.some(t => t.id === "沉淀/" + name) ? `<div class="m" style="color:var(--bad, #b43)">已有同名模板「${esc(name)}」，换个名字。</div>` : `<div class="m">会新建一个模板。</div>`; return; }
+  const old = sameSource(kind, name);
+  if (!old) { box.innerHTML = `<div class="m">没有同名真源，会新建一个。</div>`; return; }
+  box.innerHTML = `<div class="row" style="align-items:center;gap:8px;margin-top:6px;padding:6px;flex-wrap:nowrap;border:1px solid var(--warn, #c90);border-radius:6px">
+    ${old.exists ? `<img src="${img(old.source)}" style="width:56px;height:56px;object-fit:cover;border-radius:4px;flex:none">` : ""}
+    <div style="font-size:13px;flex:1;min-width:0"><b>已有同名真源「${esc(old.name)}」</b>，确认后会替换掉左边这张${old.used_by.length ? `（${old.used_by.length} 张卡在用，会跟着变）` : ""}，旧的进历史可回退。<br><span class="m">想另存一个造型就改名字，如 ${esc(old.name.split("/")[0])}/婚服。</span></div></div>`;
+}
+// 定为真源：先问「喜欢它的什么」。长相存图；画风 / 氛围存图 + 描述；构图存字
+// 项目另加的「带描述」种类（text: true，styles 以外）各多一个按钮
+const WANTS = () => [["look", "长相", `${KINDS().filter(k => !k.text).map(k => k.label).join("、")}长这样，以后都照这个（存图）`], ["paint", "画风", "以后都画成这种画法（存图 + 描述）"],
+  ["mood", "氛围", "光线、色调、情绪要这种感觉（存图 + 描述）"],
+  ...KINDS().filter(k => k.text && k.section !== "styles").map(k => ["t:" + k.as, k.label, `以后都照这个${k.label}来（存图 + 描述）`]),
+  ["comp", "构图", "这个机位和动作的写法好（存字）"]];
+function wantFields(k, it) {
+  const name = $("d-defname").value, today = `用户 ${S.today} 网页确认：就这张`;
+  const nm = (v, ph) => `<input id="d-name" autocomplete="off" value="${esc(v)}" placeholder="${ph}" style="flex:1">`;
+  const ap = `<input id="d-approved" autocomplete="off" value="${esc(today)}" placeholder="谁 / 何时 / 原话">`;
+  if (k === "look") return `<div class="row"><select id="d-kind">${KINDS().filter(t => !t.text).map(t => `<option value="${esc(t.as)}"${$("d-as").value === t.as ? " selected" : ""}>${esc(t.label)}</option>`).join("")}</select>${nm(name, "名字，如 主角/婚服")}</div>${ap}
+    <div class="row"><button class="b primary" id="d-promote">确认：定为长相真源</button></div><div id="d-conflict"></div>`;
+  const pd = it.card.promote || {};
+  if (k === "comp") return `<div class="row">${nm(pd.comp || "", "模板名，如 城门回头")}</div>
+    <textarea id="d-text" class="grow" rows="1" placeholder="这段构图 / 动作的写法（英文，可不填：自动从这张卡的环境、构图、动作摘）"></textarea>${ap}
+    <div class="row"><button class="b primary" id="d-promote">确认：存成构图模板</button></div><div id="d-conflict"></div>`;
+  const label = k === "paint" ? "画风" : k === "mood" ? "氛围" : (kindOf(k.slice(2)) || {}).label;
+  return `<div class="row">${nm((k.startsWith("t:") ? (pd.text || {})[k.slice(2)] || pd.mood : pd[k]) || "", `${label}名，如 墨白水墨`)}</div>
+    <textarea id="d-text" class="grow" rows="1" placeholder="${label}描述：写这个${label}长什么样（英文，会拼进所有用它的卡）。可不填，之后在真源区补，或让 AI 从这张图的提示词里摘"></textarea>${ap}
+    <div class="row"><button class="b primary" id="d-promote">确认：定为${label}真源</button></div><div id="d-conflict"></div>`;
+}
+// 真源描述上一次改之前是什么（从「记录」里找最近一条改描述的账）；没改过返回 null
+function descBefore(s) {
+  const as = `${(KINDS().find(k => k.section === s.section) || {}).as || s.section}:${s.name}`;
+  const p = S.promotions.find(p => p.action === "describe" && p.as === as);
+  return p ? (p.before || "") : null;
+}
+// 一张图只有一条备注：出图区 / 试样区 / 废稿区叫备注（「不要」时就是原因），素材区叫丢弃原因，都是同一条；A 进框
+function noteRow(x, ph) {
+  // 框单独占一行：提示字和「上一版」按钮放下一行，不然字一长就把框挤没了（⌘Z 换了版也看不见）
+  return `<textarea id="d-note" class="grow" rows="1" placeholder="${ph}">${esc(x.note)}</textarea>
+    <div class="row" style="align-items:center"><span class="m" id="d-note-st" style="font-size:12px"></span>${(x.note_history || []).length ? `<button class="b" id="d-note-undo" style="flex:none;margin-left:auto" title="⌘Z：和上一版来回换">↶ 上一版（⌘Z）</button>` : ""}</div>`;
+}
+// 视频卡拿它当关键帧：后端读视频卡算好的 keyframe_of；移走 / 撤回定稿前提醒，免得视频那边下次出片才报错
+const kfUses = e => e.keyframe_of || [];
+const kfText = e => kfUses(e).map(u => `${u.card}${u.title ? " " + u.title : ""}（${{first: "首帧", last: "尾帧"}[u.slot] || "中间关键帧"} ${u.at}s）`).join("、");
+const kfOk = (e, what) => !kfUses(e).length || confirm(`这张正被视频卡 ${kfText(e)} 当关键帧用。\n${what}以后，这几张视频卡要换关键帧才能再出片。确定吗？`);
+// 素材区的一条 → 它原来那张候选图（备注记在候选图上）
+function libCand(e) {
+  const c = S.cards.find(c => c.id === e.card), stem = n => String(n || "").replace(/\.[^.]+$/, "");
+  return c && c.candidates.find(x => stem(x.name) === stem(e.candidate));
+}
+// 详情顶上的键盘提示：按这张图在哪个区
+function keysFor(it) {
+  const tail = " · 回车 大图 · Esc / ⌫ 退出";
+  if (it.type === "cand") return `键盘：← → 切换 · ${it.x.verdict === "fail" ? "1 要 · 2 移回原位" : "1 要 · 3 不要"}（记完跳下一张）· 空格 跳过 · A 备注 · ⌘Z 备注换回上一版 · D 定真源${tail}`;
+  if (it.type === "lib") return `键盘：← → 切换 · 1 定稿 · 2 移回原处 · 3 丢弃 · A 备注 / 丢弃原因 · ⌘Z 备注换回上一版${tail}`;
+  if (it.type === "src") return `键盘：← → 切换 · 2 移回素材区 · 3 丢进废稿区${tail}`;
+  return `键盘：← → 切换${tail}`;
+}
+function detailBody(it) {
+  if (it.type === "cand") {
+    const c = it.card, x = it.x;
+    // 定真源的默认值由脚本给（pipeline.promote_defaults）：卡里写了 promote 就照它，没写按包 / 角色 / styles / 标题推
+    const pd = c.promote || {}, defAs = pd.look_as || "character", defName = pd.look_name || "";
+    const wantLabel = (WANTS().find(([k]) => k === pd.want) || [])[1];
+    const declared = pd.declared && wantLabel ? `<div class="m">这张卡建的时候就定好了：${esc(wantLabel)}「${esc(pd.want === "look" ? pd.look_name : pd.want === "comp" ? pd.comp : pd.want.startsWith("t:") ? pd.text[pd.want.slice(2)] : pd[pd.want])}」</div>` : "";
+    return `<div class="row"><span class="badge ${c.kind === "sketch" ? "acc" : ""}">${{sketch: "短效 · 草图", rerender: "长效 · 重绘卡", portrait: "长效 · 人物设定卡"}[c.kind] || "长效 · 镜头卡"}</span>${packBadge(it)}<span class="badge">${esc(c.id)}</span>${badgeFor(it)}</div>
+      <div class="m">${esc(x.name)} · ${esc(x.model)} · ${x.width}×${x.height}</div>
+      <div class="box"><h4>这张图</h4>
+        ${noteRow(x, "备注（可不写）· 按 A 开始写")}
+        <div class="row"><button class="b ok${x.registered ? " on" : ""}" id="d-keep">要 → 素材区</button><button class="b bad${x.verdict === "fail" ? " on" : ""}" id="d-drop">不要 → 废稿区</button></div>
+        ${x.verdict === "fail" ? `<div class="row"><button class="b" id="d-back">← 移回原位（2）</button><span class="m">回到原来的${isSketch(it) ? "试样区" : "出图区"}（同一个包），变回未审。</span></div>` : ""}
+        <div class="m">拿不准就先不点，留在这里。键盘：${x.verdict === "fail" ? "1 要 · 2 移回原位" : "1 要 · 3 不要"} · 空格 跳过 · A 写备注（Esc / 回车 收起并保存；不在框里时 ⌘Z 和上一版来回换）</div></div>
+      <div class="box" id="d-srcbox"><h4>定为真源 <span class="m" style="font-weight:400">以后出图照着它来 · 按 D 用键盘定</span></h4>
+        ${declared}<div class="m">喜欢它的什么？</div>
+        <div class="row">${WANTS().map(([k, l, tip]) => `<button class="b" data-want="${k}" title="${esc(tip)}">${l}</button>`).join("")}</div>
+        <input type="hidden" id="d-as" value="${defAs}"><input type="hidden" id="d-defname" value="${esc(defName)}">
+        <div id="d-want"></div></div>
+      <details><summary class="m">更多：改归类</summary><div class="box" style="margin-top:6px">
+        <input id="d-pack" list="pack-paths" value="${esc(c.pack.join("/"))}" placeholder="大包/小包/子包，如 人物/主角/氛围测试">
+        <datalist id="pack-paths">${allPackPaths().map(p => `<option value="${esc(p)}">`).join("")}</datalist>
+        <div class="row"><button class="b" id="d-savepack">移到这个包</button><span class="m">整张卡（${c.candidates.length} 张图）一起移；只改归类，不搬文件、不影响出图。</span></div></div></details>
+      ${c.feedback.length ? `<details><summary class="m">反馈记录（${c.feedback.length}）</summary><div class="list" style="margin-top:6px">${c.feedback.slice().reverse().map(f => `<div class="item"><b>${esc(f.verdict)}</b> · ${esc(f.by)} · ${esc((f.at || "").slice(0, 16))}<div class="m">${esc(f.reason)}${f.root_cause ? " ｜ 归因：" + esc(f.root_cause) : ""}</div></div>`).join("")}</div></details>` : ""}
+      ${aiFold(c, x)}`;
+  }
+  if (it.type === "src") {
+    const s = it.s;
+    return `<div class="row"><span class="badge acc">${esc(s.label)}</span>${packBadge(it)}</div>
+      <div class="m">${esc(s.source)}</div>
+      ${s.approved ? `<div><h4>批准</h4><div style="font-size:13px">${esc(s.approved)}${s.at ? " · " + esc(s.at) : ""}</div></div>` : ""}
+      ${s.note ? `<div><h4>备注</h4><div style="font-size:13px">${esc(s.note)}</div></div>` : ""}
+      ${s.text ? `<div><h4>${esc(s.look || s.label)}描述（字）</h4>
+        <textarea id="d-desc" placeholder="写这个${esc(s.look || s.label)}长什么样（英文）。还没写：自己写，或让 AI 从这张图的提示词里摘">${esc(s.prompt || "")}</textarea>
+        <input id="d-desc-ok" autocomplete="off" value="${esc(`用户 ${S.today} 网页确认：描述这样写`)}" placeholder="谁 / 何时 / 原话">
+        <div class="row"><button class="b primary" id="d-desc-save">保存描述</button>${descBefore(s) !== null ? `<button class="b" id="d-desc-undo" title="${esc(descBefore(s) || "（改之前是空的）")}">↶ 填回改之前的</button>` : ""}</div>
+        <div class="m">引用它的卡出图时会拼上这段（改了以后那些卡要重新 compose）；样张不动。清空再保存 = 删掉描述。</div></div>` : ""}
+      <div class="box"><h4>移出真源区</h4>
+        <div class="row"><button class="b" id="d-demote">← 移回素材区（2）</button><button class="b bad" id="d-srcdrop">丢进废稿区（3）</button></div>
+        <div class="m">撤掉这次定真源：${s.history.length ? "换回上一版（历史里最近那张）" : "没有旧版，这条真源会删掉"}；原图${s.from ? `（${esc(s.from)}）` : ""}回素材区（草图回试样区）；按 3 则直接进废稿区。真源存下的那份图文件不删。${!s.history.length && s.used_by.length ? `<b>有 ${s.used_by.length} 张卡在用，删了它们就没有这个真源了。</b>` : ""}</div></div>
+      <div><h4>被这些卡引用</h4><div style="font-size:13px">${s.used_by.length ? s.used_by.map(esc).join("、") : "还没有"}</div></div>
+      <div class="m">卡里引用：<code>${s.section === "characters" ? `characters: [{name: ${esc(s.name)}}]` : `${s.section}: [${esc(s.name)}]`}</code></div>
+      ${s.history.length ? `<div><h4>历史版本（${s.history.length}）</h4><div class="hist">${s.history.map(hh => `<img src="${img(hh.source)}" title="${esc(hh.replaced)} 被替换 · ${esc(hh.approved)}" data-open="${esc(hh.source)}">`).join("")}</div></div>` : ""}`;
+  }
+  if (it.type === "lib") {
+    const e = it.e, lx = libCand(e);
+    return `<div class="row">${badgeFor(it)}${packBadge(it)}<span class="badge">${esc(e.batch)}</span></div><div class="m">${esc(e.file)} · ${esc(e.model || "")}</div>
+      <div class="box"><h4>只有你能定稿 <span class="m" style="font-weight:400">键盘 1 = 定稿</span></h4><div class="row">${Object.entries(LIB).filter(([k]) => k !== "draft" && k !== "rejected").map(([k, [l, c]]) => `<button class="b ${c}${e.status === k ? " on" : ""}" data-decide="${k}">${l}</button>`).join("")}</div>
+        <div class="m">定稿 = 定下关键帧（关键的参考图）：视频要求只认定稿时，视频卡的关键帧（首帧、中间几张、尾帧）只能用定稿图。</div>
+        ${kfUses(e).length ? `<div style="font-size:13px"><b>正被视频卡当关键帧：</b>${esc(kfText(e))}</div>` : ""}</div>
+      <div class="box"><h4>移出素材区</h4>
+        ${lx ? noteRow(lx, "备注 / 丢弃的原因（可不写）· 按 A 开始写") : ""}
+        <div class="row"><button class="b" id="d-return">← 移回原处（2）</button><button class="b bad" id="d-discard">丢弃 → 废稿区（3）</button></div>
+        <div class="m">移回（键盘 2）：回到原来的${e.card && e.card.startsWith("s-") ? "试样区" : "出图区"}（同一个包），变回未审。丢弃（键盘 3）：进废稿区，上面的备注就是丢弃原因，记进卡里。</div></div>
+      ${e.prompt ? `<details><summary class="m">给 AI 看的 · 英文提示词（默认收起）</summary><pre style="white-space:pre-wrap;margin-top:6px">${esc(e.prompt)}</pre></details>` : ""}`;
+  }
+  if (it.type === "insp") {
+    const i = it.i;
+    return `<div class="row">${packBadge(it)}${badgeFor(it)}</div><div><h4>为什么选</h4><div style="font-size:13px">${esc(i.note)}</div></div>
+      <div class="m">编号 ${esc(i.id)} · ${esc((i.at || "").slice(0, 10))}</div><div class="m">原文件：${esc(i.from)}</div>
+      <div class="m">试样时用 <code>--ref ${esc(i.id)}</code></div>`;
+  }
+  return "";
+}
+function bindDetail(it) {
+  const q = s => $("d-body").querySelectorAll(s);
+  q("[data-open]").forEach(e => e.onclick = () => lightbox([{file: e.dataset.open, cap: e.title}], 0));
+  if (it.type === "cand") {
+    bindNote(it);
+    $("d-keep").onclick = () => keepOrDrop("keep", false);
+    $("d-drop").onclick = () => keepOrDrop("drop", false);
+    if ($("d-back")) $("d-back").onclick = moveBack;
+    $("d-savepack").onclick = () => {
+      const pack = $("d-pack").value.trim();
+      if (pack.split("/").filter(Boolean).length < 2) { toast("至少写到小包：大包/小包", true); return; }
+      post("/api/pack", {card: it.card.id, pack});
+    };
+    q("[data-want]").forEach(b => b.onclick = () => {
+      q("[data-want]").forEach(x => x.classList.toggle("on", x === b));
+      const k = b.dataset.want;
+      $("d-want").innerHTML = wantFields(k, it);
+      if (k === "look") { $("d-as").value = $("d-kind").value; $("d-kind").onchange = () => { $("d-as").value = $("d-kind").value; showConflict(); }; }
+      else $("d-as").value = k === "comp" ? "template" : k.startsWith("t:") ? k.slice(2) : "style";
+      $("d-name").oninput = showConflict; showConflict();
+      // sure：键盘那边已经确认过（含替换提醒），不再问一次
+      $("d-promote").onclick = $("d-promote")._go = sure => {
+        const kind = $("d-as").value, name = $("d-name").value.trim(), approved = $("d-approved").value.trim();
+        const text = $("d-text") ? $("d-text").value.trim() : "";
+        if (!name || !approved) { toast("名字和批准说明都要填", true); return; }
+        if (sure !== true && kind !== "template" && sameSource(kind, name) && !confirm(`「${name}」已经有真源了，确定用这张替换吗？旧的那张会进历史。`)) return;
+        post("/api/promote", {candidate: it.x.name, as: `${kind}:${kind === "template" ? "沉淀/" + name : name}`, approved,
+          text, look: k === "paint" ? "画风" : k === "mood" ? "氛围" : ""});
+      };
+    });
+  }
+  if (it.type === "src") { $("d-demote").onclick = moveBack; $("d-srcdrop").onclick = dropIt; }
+  if (it.type === "src" && $("d-desc-undo")) $("d-desc-undo").onclick = () => { $("d-desc").value = descBefore(it.s); toast("填回了改之前的描述，确认没问题再点「保存描述」"); };
+  if (it.type === "src" && $("d-desc-save")) $("d-desc-save").onclick = () => {
+    const s = it.s, text = $("d-desc").value.trim(), approved = $("d-desc-ok").value.trim();
+    if (!approved) { toast("批准说明要填", true); return; }
+    if (text === (s.prompt || "").trim()) { toast("描述没变"); return; }
+    if (!text && !confirm(`清空「${s.name}」的描述？引用它的卡就只剩样张了。`)) return;
+    if (text && bigCut(s.prompt || "", text) && !confirm(`描述删掉了一大半，确定这样保存吗？\n\n原来：${s.prompt}`)) return;
+    post("/api/describe", {as: `${(KINDS().find(k => k.section === s.section) || {}).as || s.section}:${s.name}`, text, approved});
+  };
+  if (it.type === "lib") q("[data-decide]").forEach(b => b.onclick = () => {
+    if (it.e.status === "final" && b.dataset.decide !== "final" && !kfOk(it.e, "撤回定稿")) return;
+    post("/api/library/decide", {id: it.e.id, status: b.dataset.decide});
+  });
+  if (it.type === "lib") {
+    const lx = libCand(it.e); if (lx) bindNote({card: {id: it.e.card}, x: lx});
+    $("d-return").onclick = moveBack;
+    $("d-discard").onclick = dropIt;
+  }
+}
+$("d-prev").onclick = () => openAt(cur - 1); $("d-next").onclick = () => openAt(cur + 1); $("d-close").onclick = () => $("detail").close();
+// ---------------- full-screen lightbox ----------------
+let lbShots = [], lbAt = 0, lbFromDetail = false;   // 从详情点开的大图：左右键跟着详情的列表走
+function lightbox(shots, n) {
+  if (!shots.length) return;
+  lbShots = shots; lbAt = (n + shots.length) % shots.length;
+  $("lb-img").src = img(shots[lbAt].file);
+  $("lb-cap").textContent = `${shots[lbAt].cap || ""}${shots.length > 1 ? `  (${lbAt + 1}/${shots.length}) · ← → 切换` : ""} · 点图片外任意处或 Esc 退出`;
+  if (!$("lb").open) $("lb").showModal();   // dialog 进顶层，详情框开着时也能盖在它上面
+}
+$("lb").onclick = e => { if (e.target !== $("lb-img")) $("lb").close(); };
+// ---------------- 键盘 ----------------
+// 键盘分两块，同一时间只有一块响应方向键（亮框的那块）：鼠标移到哪块就是哪块，Tab 也能切。
+// 右边网格：页签 / 筛选小框（图 · 字 · 记录，全部 · 未审 …）、文件夹、图排成一串，↑↓←→ 移动选中框（鼠标停在哪个上也选中它），
+// 回车：小框 = 切过去，文件夹 = 进去，图 = 打开详情。刚进一个包时框落在第一个文件夹 / 图上，往上一行才到小框。
+// 小框那一行和下面的文件夹 / 图之间只走 ↑↓；←→ 各管各的，最左再 ← 去左栏。
+// 真源区「字」「记录」是竖排的一条条：↑↓ 走，回车 = 展开全文 / 看这条的图，← 去左栏。
+// Esc 和 ⌫ 一样：退一步（关大图 → 关详情 → 回上一层）。回车反过来进一层：详情里回车 = 看全屏大图。
+// 左栏：↑↓ 在各区、各包之间移动，回车 / → 进去（展开下一层，框留在左栏接着往下走），← 回上一层。
+// 两块之间：右边在第一个上再按 ← 跳到左栏；左栏在「已经进来的这一项」上再按 → 跳回右边。按住不放（自动连发）不跨块，免得一路冲过去。
+// 顶上「短效 / 长效」：左栏最上面一项再按 ↑ 上去，←→ 直接切线，↓ / 回车 / Esc 回左栏。
+// 详情 / 全屏大图：←→ 切图；1 往前一步（要 / 定稿）· 2 退回上一步 · 3 丢进废稿区（各区都是这三个意思）；空格 跳过；A 写备注（详情里）。
+// 鼠标点击照旧：点哪进哪，键盘这套只是叠加的。
+let sel = null, navSel = 0, zone = "main";   // zone: main 右边 · nav 左栏
+const targets = () => [...$("view").querySelectorAll(".folder, .card, .list .item")];   // .item：真源区「字」「记录」的一条条；小框（页签 / 筛选）不进方向键，归 S
+const navBtns = () => [...$("nav").querySelectorAll("[data-g]")];
+function markSel(scroll) {
+  const t = targets(), nb = navBtns();
+  if (zone === "main" && !t.length && nb.length) {   // 右边空（空包）：框交给左栏，不然哪儿都没框、方向键也没处去
+    zone = "nav"; navSel = nb.findIndex(b => b.classList.contains("active"));
+  }
+  if (sel === null) sel = 0;   // 刚进来：落在第一个文件夹 / 图上
+  sel = Math.max(0, Math.min(sel, t.length - 1)); navSel = Math.max(0, Math.min(navSel, nb.length - 1));
+  t.forEach((c, n) => c.classList.toggle("kb", zone === "main" && n === sel));
+  nb.forEach((c, n) => c.classList.toggle("kb", zone === "nav" && n === navSel));
+  const on = zone === "nav" ? nb[navSel] : t[sel];
+  if (scroll && on && zone === "main" && Math.abs(on.getBoundingClientRect().top - t[0].getBoundingClientRect().top) < 5) window.scrollTo(0, 0);   // 走到第一行：回页顶，标题、说明和小框一起露出来
+  else if (scroll && on) {
+    on.scrollIntoView({block: "nearest"});
+    const head = document.querySelector("header").getBoundingClientRect().bottom, top = on.getBoundingClientRect().top;
+    if (top < head + 8) window.scrollBy(0, top - head - 8);   // 顶栏是固定的，「刚好露出来」会被它盖住，再让开一点
+    else if (on.getBoundingClientRect().bottom > innerHeight - 8) window.scrollBy(0, on.getBoundingClientRect().bottom - innerHeight + 8);
+  }
+}
+// 只认鼠标真的动了：页面重画或滚动时，鼠标没动但底下换了东西，浏览器也会发 mouseover / mousemove，不能让它抢走键盘选的框
+let lastXY = "";
+const moved = e => { const xy = e.screenX + "," + e.screenY; if (xy === lastXY) return false; lastXY = xy; return true; };
+$("nav").addEventListener("mousemove", e => {
+  if (!moved(e)) return;
+  const n = navBtns().indexOf(e.target.closest("[data-g]"));
+  zone = "nav"; if (n >= 0) navSel = n; markSel(false);
+});
+const navToActive = () => { zone = "nav"; navSel = navBtns().findIndex(b => b.classList.contains("active")); markSel(true); };
+function navParent() {   // 左栏当前框所在那一项的上一层；已经是区的顶层就不动
+  const b = navBtns()[navSel];
+  if (b && b.dataset.p) go(b.dataset.g, b.dataset.p.split("/").slice(0, -1).join("/"));
+}
+function vertical(d) {   // ↑↓：跳到上 / 下一行里横向最近的那个（文件夹和图两块网格列数不同，所以按位置找）
+  const t = targets(), r = t.map(c => c.getBoundingClientRect()), me = r[sel], cx = me.left + me.width / 2;
+  const rows = r.map((x, n) => [x, n]).filter(([x]) => d > 0 ? x.top > me.top + 5 : x.top < me.top - 5);
+  if (!rows.length) return sel;
+  const top = rows.reduce((a, [x]) => d > 0 ? Math.min(a, x.top) : Math.max(a, x.top), d > 0 ? Infinity : -Infinity);
+  return rows.filter(([x]) => Math.abs(x.top - top) < 5)
+    .reduce((a, [x, n]) => Math.abs(x.left + x.width / 2 - cx) < a[0] ? [Math.abs(x.left + x.width / 2 - cx), n] : a, [Infinity, sel])[1];
+}
+function enterSel() {
+  const c = targets()[sel];
+  if (!c) return;
+  if (c.classList.contains("card")) return openAt(+c.dataset.n);
+  if (c.classList.contains("item")) {   // 记录：看这条的图；字：展开 / 收起全文
+    const pic = c.querySelector("[data-logview]"), more = c.querySelector("details");
+    if (pic) pic.click(); else if (more) more.open = !more.open;
+    return;
+  }
+  c.click();
+}
+$("view").addEventListener("mousemove", e => {
+  if (!moved(e)) return;
+  const n = targets().indexOf(e.target.closest(".folder, .card, .list .item"));
+  zone = "main"; if (n >= 0) sel = n; markSel(false);
+});
+// 要 / 不要：先跳下一张，不等服务器（按钮响应要快）；失败时 post 会弹红字并刷新回真实状态
+function keepOrDrop(what, advance) {
+  const it = list[cur];
+  if (!it || it.type !== "cand") return;
+  const note = ($("d-note") && $("d-note").value.trim()) || "";   // 框空着就不动原备注（后端不写空备注）
+  clearTimeout(noteTimer); noteFor = null; it.x.note = note;   // 备注跟着结论一起存
+  const done = `${picName(it.x.name)} → ${what === "keep" ? "素材区" : "废稿区"}`;
+  toast(done);
+  const body = {card: it.card.id, candidate: it.x.name, note};
+  if (advance) openAt(cur + 1);
+  post(what === "keep" ? "/api/keep" : "/api/review", what === "keep" ? body : {...body, verdict: "fail", note: note || it.x.note}, done);
+}
+// 2 = 移回原位（上一步）：废稿 → 回试样区 / 出图区（未审）；素材 → 回试样区 / 出图区；真源 → 撤掉这次定真源，原图回素材区
+function moveBack() {
+  const it = list[cur];
+  if (!it) return;
+  if (it.type === "cand") {
+    if (it.x.verdict !== "fail") { toast("这张已经在待定的位置了（没审过）"); return; }
+    post("/api/unreview", {card: it.card.id, candidate: it.x.name}, `${picName(it.x.name)} → 移回${isSketch(it) ? "试样区" : "出图区"}（未审）`);
+  } else if (it.type === "lib") {
+    if (it.e.status === "final") { toast("这张已经定稿了：先点「待定」撤回定稿，再移回原处", true); return; }
+    if (kfUses(it.e).length && !kfOk(it.e, "移回原处")) return;
+    post("/api/library/return", {card: it.e.card, candidate: it.e.candidate}, `${picName(it.e.candidate)} → 移回${homeOf(it.e.card)}（未审）`);
+  } else if (it.type === "src") demote(it.s, false);
+}
+function demote(s, discard) {
+  const force = !s.history.length && s.used_by.length > 0;
+  const what = s.history.length ? "换回上一版" : force ? `删掉这条真源（${s.used_by.length} 张卡在用，删了就没有这个真源了）` : "删掉这条真源（没有旧版）";
+  if (!confirm(`把「${s.name}」${discard ? "丢进废稿区" : "移回素材区"}？会${what}，原图${discard ? "进废稿区" : "回素材区"}。`)) return;
+  post("/api/demote", {as: `${(KINDS().find(k => k.section === s.section) || {}).as || s.section}:${s.name}`, force, discard},
+    `真源「${s.name}」${s.history.length ? "换回上一版" : "撤掉"}，原图${s.from ? `（${picName(s.from)}）` : ""} → ${discard ? "废稿区" : "素材区"}`);
+}
+// 1 = 往前一步：出图 / 试样 / 废稿 → 素材区（要）；素材区 → 定稿。真源区已经是最后一步，不动
+function keepIt() {
+  const it = list[cur];
+  if (!it) return;
+  if (it.type === "cand") return keepOrDrop("keep", true);
+  if (it.type === "lib") {
+    if (it.e.status === "final") { toast("这张已经定稿了"); return; }
+    const done = `${picName(it.e.candidate)} 定稿`; toast(done); const id = it.e.id; openAt(cur + 1); post("/api/library/decide", {id, status: "final"}, done);
+  } else if (it.type === "src") toast("已经是真源了（2 移回素材区 · 3 丢进废稿区）");
+}
+// 3 = 丢进废稿区：出图 / 试样 → 不要；素材区 → 丢弃；真源区 → 撤掉真源，图进废稿区
+function dropIt() {
+  const it = list[cur];
+  if (!it) return;
+  if (it.type === "cand") { if (it.x.verdict === "fail") toast("已经在废稿区了（1 要 · 2 移回原位）"); else keepOrDrop("drop", true); return; }
+  if (it.type === "lib") {
+    if (it.e.status === "final") { toast("这张已经定稿了：先点「待定」撤回定稿，再丢弃", true); return; }
+    if (kfUses(it.e).length && !kfOk(it.e, "丢进废稿区")) return;
+    clearTimeout(noteTimer); noteFor = null;   // 原因跟着丢弃一起存
+    post("/api/library/discard", {card: it.e.card, candidate: it.e.candidate, note: ($("d-note") && $("d-note").value.trim()) || ""}, `${picName(it.e.candidate)} → 废稿区`);
+  } else if (it.type === "src") demote(it.s, true);
+}
+// 备注：A 只管进框；框里 Esc / 回车 收起并保存。停手一会儿也自动存（只落文件），收起、切图、关详情、切走标签页时存一版进版本历史。
+// 防手滑不拦人：一次编辑（进框到收起）只留一版旧的；删掉一大半时旁边亮一句提醒。
+// ⌘Z（不在输入框里）：现在这版和上一版来回换。兜底：后台每张图留最近 10 版（note_history），再早的在版本历史里。
+let noteFor = null, noteTimer = 0, noteSession = false;   // noteSession：这次编辑已经留过旧版，后面的自动存直接覆盖
+let noteDirty = false;   // 落了文件还没存进版本历史
+const bigCut = (old, now) => old.trim().length >= 6 && now.trim().length < old.trim().length * 0.5;
+const pushNoteHist = (it, old) => { it.x.note_history = [...(it.x.note_history || []).filter(h => h.note !== old), {note: old}]; };   // 和后端一样去重
+async function sendNote(it, note, history, commit) {
+  const r = await fetch("/api/note", {method: "POST", headers: {"Content-Type": "application/json"}, keepalive: true,
+    body: JSON.stringify({card: it.card.id, candidate: it.x.name, note, history, commit})});
+  const j = await r.json(); if (!j.ok) throw new Error(j.output);
+  noteDirty = !commit;
+}
+function bindNote(it) {
+  noteFor = it; noteSession = false; const box = $("d-note");
+  box.onfocus = () => { noteSession = false; };
+  box.oninput = () => { clearTimeout(noteTimer); $("d-note-st").textContent = "…"; noteTimer = setTimeout(() => saveNote(false), 1500); };
+  box.onblur = () => saveNote();
+  bindNoteUndo(it);
+}
+// 撑开 / 收起：进框按字数撑开（最多半屏，再多就框里滚），出框收回一行、回到开头
+const fitBox = el => { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, innerHeight / 2) + "px"; };
+document.addEventListener("focusin", e => { if (e.target.matches("textarea.grow")) fitBox(e.target); });
+document.addEventListener("input", e => { if (e.target.matches("textarea.grow:focus")) fitBox(e.target); });
+document.addEventListener("focusout", e => { if (e.target.matches("textarea.grow")) { e.target.style.height = ""; e.target.scrollTop = 0; } });
+function bindNoteUndo(it) { if ($("d-note-undo")) $("d-note-undo").onclick = swapNote; }
+async function swapNote() {   // 换成上一版；现在这版进历史，所以再按一次又换回来
+  const it = noteFor, box = $("d-note"), h = it && it.x.note_history;
+  if (!box || !h || !h.length) { toast("这条备注还没有上一版"); return; }
+  const wasEmpty = !box.value.trim();   // 空备注不留版本：清空后换回原文，就不再换回空的
+  box.value = h[h.length - 1].note; noteSession = false;
+  await saveNote(false);   // 只落文件，切图 / 关详情时存进版本历史
+  const st = $("d-note-st"); if (st) { st.textContent = wasEmpty ? "已恢复上一版" : "已换成上一版 · 再按 ⌘Z 换回来"; st.style.color = ""; }
+}
+async function saveNote(commit = true) {   // commit：false = 写到一半的自动存，只落文件
+  clearTimeout(noteTimer);
+  const it = noteFor, box = $("d-note");
+  if (!it || !box || !box.isConnected) return;
+  const text = box.value.trim(), st = $("d-note-st"), old = (it.x.note || "").trim();
+  if (text === old) {
+    if (st && st.textContent === "…") st.textContent = "";
+    if (commit && noteDirty) { try { await sendNote(it, text, false, true); } catch (e) { toast("备注没存进版本：" + e.message, true); } }
+    return;
+  }
+  const keep = !noteSession;
+  const before = keep ? old : ((it.x.note_history || []).slice(-1)[0] || {}).note || "";   // 这次编辑之前的样子
+  if (keep && old) pushNoteHist(it, old);   // 和后端一样：旧的进历史
+  noteSession = true;
+  it.x.note = text;   // 先记下，同一段字不重复存
+  try {
+    await sendNote(it, text, keep, commit);
+    if (st && st.isConnected && noteFor === it) {
+      const cut = bigCut(before, text);
+      st.textContent = cut ? (text ? "删掉了一大半，已存 · ⌘Z 换回" : "清空了，已存 · ⌘Z 换回") : "已保存";
+      st.style.color = cut ? "var(--warn, #c90)" : "";
+      if ((it.x.note_history || []).length && !$("d-note-undo")) { st.insertAdjacentHTML("afterend", `<button class="b" id="d-note-undo" style="flex:none;margin-left:auto" title="⌘Z：和上一版来回换">↶ 上一版（⌘Z）</button>`); bindNoteUndo(it); }
+    }
+  } catch (e) { it.x.note = null; toast("备注没存上：" + e.message, true); }
+}
+const typing = () => ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName);
+// 定真源模式（详情里按 D 进出）：S 切喜欢什么 · A 进描述（长相没有描述，进名字）· 回车 弹确认框、再回车定下 · 1 / 2 / 3 暂停 · D / Esc / ⌫ 退出
+let srcMode = false;
+function setSrcMode(on) {
+  const box = $("d-srcbox");
+  srcMode = on && !!box;
+  if (box) box.classList.toggle("kb", srcMode);
+  $("d-keys").textContent = srcMode ? "定真源：← → / S 切喜欢什么 · A 写描述（长相是名字）· 回车 确认（弹框再回车定下）· 1 / 2 / 3 暂停 · D / Esc / ⌫ 退出" : keysFor(list[cur]);
+  if (!srcMode) return;
+  const want = (list[cur].card.promote || {}).want;   // 没选过：落在卡里定好的那个（没写就是长相）
+  if (!box.querySelector("[data-want].on")) (box.querySelector(`[data-want="${want}"]`) || box.querySelector("[data-want]")).click();
+  box.scrollIntoView({block: "nearest"});
+}
+function nextWant(d) {
+  const bs = [...$("d-srcbox").querySelectorAll("[data-want]")], on = bs.findIndex(b => b.classList.contains("on"));
+  const b = bs[(on + d + bs.length) % bs.length];
+  b.click(); b.classList.remove("flash"); void b.offsetWidth; b.classList.add("flash");   // 重新挂一次，连按也每次都闪
+}
+function promoteByKey() {
+  const b = $("d-promote"); if (!b) return;
+  const kind = $("d-as").value, name = $("d-name").value.trim(), approved = $("d-approved").value.trim();
+  if (!name || !approved) { toast("名字和批准说明都要填", true); (name ? $("d-approved") : $("d-name")).focus(); return; }
+  const replace = kind !== "template" && sameSource(kind, name);
+  if (confirm(`${b.textContent.replace("确认：", "")}「${name}」？${replace ? "\n已经有同名真源，旧的那张会进历史。" : ""}`)) b._go(true);
+}
+$("lb").addEventListener("close", () => { lbFromDetail = false; });
+$("detail").addEventListener("close", () => { saveNote(); sel = $("view").querySelectorAll(".folder").length + cur; markSel(true); });
+document.addEventListener("keydown", e => {
+  // 详情里的框（备注、定真源、描述、批准说明、改归类……）：Esc 只收起框、不关详情（备注顺带保存；输入法正在拼字时不算）。
+  // 回车也收起的只有备注框和定真源那块（描述框里回车照常换行）
+  if (typing() && $("detail").open && $("d-body").contains(document.activeElement)) {
+    if (e.isComposing || e.keyCode === 229 || e.metaKey || e.ctrlKey || e.altKey) return;
+    const oneLine = document.activeElement.id === "d-note" || ($("d-srcbox") && $("d-srcbox").contains(document.activeElement));
+    if (e.key === "Escape" || (e.key === "Enter" && oneLine)) {
+      e.preventDefault(); e.stopImmediatePropagation(); document.activeElement.blur();
+    }
+    return;
+  }
+  // ⌘Z（Ctrl 同理，不在输入框里）：备注和上一版来回换；输入框里的 ⌘Z 留给浏览器撤销刚打的字
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "z" || e.key === "Z") && !typing() && $("detail").open && !$("lb").open) {
+    if ($("d-note")) swapNote();
+    e.preventDefault(); e.stopImmediatePropagation(); return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey || typing()) return;
+  const k = e.key, inDetail = $("detail").open, inLb = $("lb").open;
+  if ((k === "q" || k === "Q") && !inDetail && !inLb) {   // Q：平铺 / 收起（只在有「平铺」按钮的地方）
+    if ($("flat")) $("flat").click(); else return;
+    e.preventDefault(); e.stopImmediatePropagation(); return;
+  }
+  if ((k === "w" || k === "W") && !inDetail && !inLb) {   // W：短效 / 长效 来回切（按住不放只切一次）
+    if (!e.repeat) { const b = document.querySelector("#line [data-line]:not(.on)"); if (b) b.click(); }
+    e.preventDefault(); e.stopImmediatePropagation(); return;
+  }
+  if ((k === "s" || k === "S") && !inDetail && !inLb) {   // S：这排小框（全部 / 未审 / 旧结论，真源区 图 / 字 / 记录）挨个切，⇧S 倒着
+    const cs = [...$("view").querySelectorAll(".chip")], on = cs.findIndex(c => c.classList.contains("on"));
+    if (!e.repeat && cs.length) cs[(on + (e.shiftKey ? -1 : 1) + cs.length) % cs.length].click();
+    e.preventDefault(); e.stopImmediatePropagation(); return;
+  }
+  if ((k === "e" || k === "E") && !inDetail && !inLb) {   // E：下一个区，⇧E 上一个（按住不放只切一次）
+    if (!e.repeat) nextZone(e.shiftKey ? -1 : 1);
+    e.preventDefault(); e.stopImmediatePropagation(); return;
+  }
+  if (k === "Escape" || k === "Backspace") {   // 两个键一个意思：退一步。先关全屏大图，再关详情，都没开就回上一层；按住不放只算一次
+    if (!e.repeat) {
+      if (inLb) $("lb").close(); else if (inDetail && srcMode) setSrcMode(false); else if (inDetail) $("detail").close();
+      else if (zone === "nav") navParent(); else if (nav.path) go(nav.group, nav.path.split("/").slice(0, -1).join("/"));
+    }
+    e.preventDefault(); e.stopImmediatePropagation(); return;
+  }
+  if (inLb && !lbFromDetail) {   // 沉淀记录 / 提示词区里的全屏大图：只切图
+    if (k === "ArrowLeft") lightbox(lbShots, lbAt - 1); else if (k === "ArrowRight") lightbox(lbShots, lbAt + 1); else if (k !== "Enter") return;
+  } else if (inDetail) {
+    const step = d => { openAt(cur + d); if (inLb) lightbox([{file: list[cur].file, cap: list[cur].title}], 0); };
+    if ((k === "d" || k === "D") && !inLb) {
+      if (e.repeat) {} else if ($("d-srcbox")) setSrcMode(!srcMode); else toast("只有出图区 / 试样区 / 废稿区的图能定真源");
+    }
+    else if (srcMode && !inLb && (k === "s" || k === "S")) { if (!e.repeat) nextWant(e.shiftKey ? -1 : 1); }
+    else if (srcMode && !inLb && (k === "ArrowLeft" || k === "ArrowRight")) nextWant(k === "ArrowLeft" ? -1 : 1);   // 模式里 ←→ 也是切喜欢什么，不换图
+    else if (srcMode && !inLb && (k === "a" || k === "A")) { const b = $("d-text") || $("d-name"); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }
+    else if (srcMode && !inLb && k === "Enter") { if (!e.repeat) promoteByKey(); }
+    else if (srcMode && (k === "1" || k === "2" || k === "3")) toast("定真源模式里 1 / 2 / 3 暂停；D / Esc 先退出");
+    else if (k === "ArrowLeft") step(-1); else if (k === "ArrowRight") step(1);
+    else if (k === "1" || k === "2" || k === "3") { ({1: keepIt, 2: moveBack, 3: dropIt})[k](); if (inLb && list[cur]) lightbox([{file: list[cur].file, cap: list[cur].title}], 0); }
+    else if ((k === "a" || k === "A") && !inLb && $("d-note")) { const b = $("d-note"); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }
+    else if (k === " ") step(1);
+    // 回车由这里接管：不然会去「点」弹窗里拿着焦点的按钮（打开时是「上一项」，鼠标点过的是那个按钮），看起来像乱切图
+    else if (k === "Enter") { if (!inLb) $("d-img").click(); }   // 回车进一层：详情 → 全屏大图；大图里不动
+    else return;
+  } else if (!inLb && k === "Tab") {   // 切到左栏时框落在当前所在的那一项上
+    if (zone === "main") navToActive(); else { zone = "main"; markSel(true); }
+  } else if (!inLb && zone === "nav") {
+    if (k === "ArrowUp" || k === "ArrowDown") { navSel += k === "ArrowUp" ? -1 : 1; markSel(true); }
+    else if (k === "ArrowRight" && navBtns()[navSel]?.classList.contains("active")) { if (!e.repeat && targets().length) { zone = "main"; markSel(true); } }
+    else if (k === "Enter" || k === "ArrowRight") { const b = navBtns()[navSel]; if (b) go(b.dataset.g, b.dataset.p); }
+    else if (k === "ArrowLeft") { if (!e.repeat) navParent(); }   // 按住不放不连退，防止从右边冲过来一路退到顶
+    else return;
+  } else if (!inLb && targets().length) {
+    // 最左再 ← 直接去左栏
+    const inList = targets()[sel]?.classList.contains("item");   // 一条条竖着排：只走 ↑↓，← 去左栏，→ 不动
+    if (k === "ArrowLeft" && (sel === 0 || inList)) { if (!e.repeat) navToActive(); }
+    else if (k === "ArrowRight" && (sel === targets().length - 1 || inList)) {}   // 最后一张：不动
+    else if (k === "ArrowLeft" || k === "ArrowRight") { sel += k === "ArrowLeft" ? -1 : 1; markSel(true); }
+    else if (k === "ArrowUp" || k === "ArrowDown") { sel = vertical(k === "ArrowUp" ? -1 : 1); markSel(true); }
+    else if (k === "Enter") enterSel();
+    else return;
+  } else return;
+  e.preventDefault(); e.stopImmediatePropagation();
+}, true);
+// W：短效 / 长效来回切；E：同一条线里的区挨个切（短效 参考 ↔ 试样，长效 出图 → 素材 → 真源 → 废稿），⇧E 倒着切
+document.querySelectorAll("#line [data-line]").forEach(b => b.onclick = () => {
+  if (ZONES[nav.group].line === b.dataset.line) return;
+  const g = lineLast[b.dataset.line] || firstZone(b.dataset.line);
+  switchTo(g, samePath(g));
+});
+function nextZone(d) {
+  const gs = Object.keys(ZONES).filter(g => ZONES[g].line === ZONES[nav.group].line), g = gs[(gs.indexOf(nav.group) + d + gs.length) % gs.length];
+  switchTo(g, samePath(g));
+}
+$("reload").onclick = load; $("menu-toggle").onclick = () => $("nav").classList.toggle("open");
+load().catch(e => toast("读不到数据：" + e, true));
+// 切回这个标签页时自动拉一次新数据（后台出完图不用手点刷新）；看大图时不打断
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { saveNote(); return; }   // 切走标签页：备注存一版进版本历史
+  if (!$("detail").open) load().catch(() => {});
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# 视频卡 —— 一张卡 = 一个镜头 = 一条片子。只写"这一镜要什么"，长相交给真源，口径交给 blocks。
+# 字段说明见 references/card-schema.md
+id: XX-XX
+title: 镜头标题
+group: ''                      # 同一幕/同一组；放映厅按它分组，剪辑单按它拼
+model: ''                      # video.models 里的别名；空 = models.default
+first_frame: ''                # 关键帧 · 0 秒那张：路径 / image:<图卡> / source:characters/<名> / library:<id>
+keyframes: []                  # 关键帧 · 中间几张，按时间排：[image:<图卡>, {ref: <引用>, at: 3}]；不写 at 就均分
+last_frame: ''                 # 关键帧 · 结尾那张：要从 A 状态过渡到 B 状态时给
+characters: []                 # 真源里的角色名：参考模式下作身份参考图
+styles: []                     # 画风 / 氛围真源名：拼进它在 sources.yaml 里的 prompt 描述（不送样张）
+refs:
+  images: []                   # 额外参考图（路径或引用）
+  videos: []                   # 参考视频（take:<卡>/<条> 或路径）
+  audios: []                   # 参考音频
+mode: auto                     # auto | first_frame | keyframes | reference | text
+duration: 5                    # 秒
+aspect: '16:9'
+resolution: ''                 # 留空用模型默认
+takes: 1                       # 默认出几条（generate --budget 覆盖，是总数不是增量）
+motion: >-
+  Slow cinematic push-in, restrained subtle acting. ...
+hard_rules: []                 # 本镜额外硬规则（英文句）
+motion_tail: ''                # 留空用 blocks/motion_tail.txt
+subtitle: ''                   # 台词/字幕：只给剪辑单用，不进生成提示词
+hold: ''                       # 非空即锁：validate 报错、generate 拒跑
+created: ''
