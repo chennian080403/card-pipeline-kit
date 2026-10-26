@@ -13,8 +13,9 @@ job.json:
     first_frame / last_frame / images   file names inside the job folder
     duration / aspect / width / height / seed / steps
     vllm         {url, fps, flow_shift, audio_flow_shift}
-    comfyui      {url, workflow, nodes}   workflow = API-format json on the box;
-                 nodes maps our fields to "<node id>.<input name>" (see providers.md)
+    comfyui      {url, workflows, nodes}  workflows.<task> = API-format json (relative = shipped in
+                 the job folder, absolute = already on the box); nodes maps our fields to
+                 "<node id>.<input name>"; an image field with no image drops its loader node
 
 Exit 0 only when result.mp4 exists. Everything said on stdout/stderr ends up in the
 job log, which the provider copies back into the local run dir.
@@ -96,9 +97,12 @@ def run_vllm(job, folder, out):
 # ComfyUI: upload images, patch an API-format workflow, queue, wait, download
 # --------------------------------------------------------------------------- #
 
-def _comfy_upload(base, path):
+def _comfy_upload(base, path, folder):
+    # ComfyUI reads the file when the prompt runs, not when it is queued: a shared name like
+    # first_frame.png would be overwritten by the next queued take, so every take gets its own name
+    name = f"vcp_{folder.name}_{path.name}"
     boundary = uuid.uuid4().hex
-    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{path.name}\"\r\n"
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{name}\"\r\n"
             f"Content-Type: application/octet-stream\r\n\r\n").encode() + path.read_bytes() + \
         f"\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue\r\n--{boundary}--\r\n".encode()
     request = urllib.request.Request(f"{base}/upload/image", data=body, method="POST",
@@ -107,11 +111,19 @@ def _comfy_upload(base, path):
         return json.loads(response.read())["name"]
 
 
+def _drop_node(graph, node_id):
+    graph.pop(node_id, None)
+    for node in graph.values():
+        inputs = node.get("inputs") or {}
+        for name in [n for n, v in inputs.items() if isinstance(v, list) and v and str(v[0]) == node_id]:
+            del inputs[name]
+
+
 def run_comfyui(job, folder, out):
     cfg = job.get("comfyui") or {}
     base = cfg.get("url", "http://127.0.0.1:8188").rstrip("/")
     task = TASKS[job["mode"]]
-    workflow_path = Path((cfg.get("workflows") or {}).get(task) or "")
+    workflow_path = folder / ((cfg.get("workflows") or {}).get(task) or "")   # relative = shipped in the job folder
     nodes = (cfg.get("nodes") or {}).get(task) or {}
     if not workflow_path.is_file() or not nodes:
         raise SystemExit(f"comfyui: no workflow/nodes configured for {task} (video.cloud.comfyui.workflows / nodes)")
@@ -121,14 +133,17 @@ def run_comfyui(job, folder, out):
               "width": job.get("width"), "height": job.get("height"), "steps": job.get("steps")}
     for key in ("first_frame", "last_frame"):
         if job.get(key):
-            values[key] = _comfy_upload(base, folder / job[key])
+            values[key] = _comfy_upload(base, folder / job[key], folder)
     for index, name in enumerate(job.get("images") or [], 1):
-        values[f"image{index}"] = _comfy_upload(base, folder / name)
+        values[f"image{index}"] = _comfy_upload(base, folder / name, folder)
     for field, target in nodes.items():
-        if field == "output" or values.get(field) in (None, ""):
+        if field == "output":
             continue
         node_id, _, input_name = target.partition(".")
-        graph[node_id]["inputs"][input_name] = values[field]
+        if values.get(field) not in (None, ""):
+            graph[node_id]["inputs"][input_name] = values[field]
+        elif field in ("first_frame", "last_frame") or field.startswith("image"):
+            _drop_node(graph, node_id)    # image not given (e.g. no last frame): unhook its loader
     request = urllib.request.Request(f"{base}/prompt", method="POST", headers={"Content-Type": "application/json"},
                                      data=json.dumps({"prompt": graph, "client_id": uuid.uuid4().hex}).encode())
     with _local_opener().open(request, timeout=60) as response:

@@ -62,7 +62,17 @@ $V cloud down                                 # 批次跑完必须关；`cloud u
 `prompt / fps=24 / num_inference_steps=50 / flow_shift=12 / seed / extra_params={"task","duration","audio_flow_shift":3.0}`；
 首尾帧 = 两个 `input_references` + `extra_params.frame_indices=[0,-1]`；只首帧 = `input_reference`；参考图 ≤9 张 + `aspect_ratio=adaptive`。不给宽高时按首帧比例、短边 768。出的 mp4 带 32kHz 立体声。
 
-**选机器**：按模型官方写的显存 / 内存 / 磁盘要求挑；按小时计费，攒一批卡再开机。用 ComfyUI 版时，在 `cloud.comfyui` 里填 `workflows.<任务>`（盒子上的 API 格式工作流 json）和 `nodes.<任务>`：`{prompt: "<节点>.<输入>", first_frame: …, last_frame: …, seed: …, frames: …, output: "<出视频的节点 id>"}`，开机后从镜像自带工作流导出再填。
+**选机器**：按模型官方写的显存 / 内存 / 磁盘要求挑；按小时计费，攒一批卡再开机。33B 的 H3 在单卡 48GB 上用 int8 全量权重（不是 pruned）能整个放进显存，bf16 放不下会卸载、慢好几倍。
+
+**ComfyUI 后端**（单卡推荐）：在 `cloud.comfyui` 里填 `workflows.<任务>` 和 `nodes.<任务>`：
+- `workflows.<任务>`：API 格式工作流 json。写本机路径（相对项目目录或绝对路径）就每条随任务文件夹一起传上去，盒子上不留状态；写盒子上的绝对路径也行。
+- `nodes.<任务>`：`{prompt: "<节点>.<输入>", first_frame: …, last_frame: …, seed: …, frames: …, width: …, height: …, steps: …, output: "<出视频的节点 id>"}`。卡里没给的图（比如没有尾帧）会把对应的图片加载节点和它的连线一起删掉。不给 width/height 时尺寸由工作流自己按首帧算。
+- 模型条目里也能写 `comfyui:`（整块覆盖 workflows / nodes），一个盒子挂几档：抽卡档、定稿档、官方原版。
+- 自带三份首尾帧（fl2va）工作流，放在 `scripts/remote/workflows/`，只用 ComfyUI 核心的 MiniMax H3 节点和社区常见的加速节点：
+  `h3_fl2va_official_api.json`（官方 20 步 res_multistep，约 0.75MP）、
+  `h3_fl2va_final_api.json`（lightx2v SLA turbo LoRA + `H3SLAAttention` + `MiniMaxH3DualClockSamplerT8`，6 步，约 0.75MP）、
+  `h3_fl2va_draft_api.json`（同上，4 步，约 0.4MP，也就是 480p，用来抽卡）。
+  加速档要用到的 LoRA 和插件，镜像里得有；换镜像以后对照它的 `/object_info` 核对节点名和文件名。
 
 ## 新增一种入口
 在 `providers.py` 写一个 `Provider` 子类（实现 `submit` / `poll`，可选 `credentials_ok`），并登记进 `KINDS`。上面的契约不变。

@@ -324,8 +324,16 @@ class CompshareProvider(Provider):
         mode = job["mode"]
         if mode == "keyframes" and not (refs.get("last_frame") or {}).get("path"):
             mode = "first_frame"          # first + middle frames, no last: H3 runs from the first frame (validate says so)
+        comfyui = {**(settings.get("comfyui") or {}), **(self.spec.get("comfyui") or {})}   # a model may bring its own preset
+        workflows = dict(comfyui.get("workflows") or {})
+        for task, value in workflows.items():
+            local = self.cfg.resolve(value)
+            if local.is_file():         # a workflow kept in the project rides along with each take
+                shutil.copy2(local, stage / f"workflow_{task}.json")
+                workflows[task] = f"workflow_{task}.json"
+        comfyui["workflows"] = workflows
         remote_job = {"backend": settings["backend"], "mode": mode, "duration": job["duration"],
-                      "aspect": job["aspect"], "vllm": settings.get("vllm") or {}, "comfyui": settings.get("comfyui") or {}}
+                      "aspect": job["aspect"], "vllm": settings.get("vllm") or {}, "comfyui": comfyui}
         for key in ("width", "height", "steps", "seed", "short_edge"):
             if self.spec.get(key):
                 remote_job[key] = self.spec[key]

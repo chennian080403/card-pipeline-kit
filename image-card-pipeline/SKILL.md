@@ -226,6 +226,7 @@ image-card-pipeline/
     quickstart.md                从零接入你自己的项目（单用生图 / 和视频一起）
     ecosystem-contract.md        和视频 Skill 的共同约定（与视频那份同一份）
     architecture.md              四层结构、数据流、output 布局
+    reference-reverse.md         参考图逆向：反推七字段、局部参考、边界与自检
     card-schema.md               卡片字段与卡型
     providers.md                 供应商接入契约与实测坑
     workflow.md                  一轮怎么跑、幂等与重跑、沉淀细节

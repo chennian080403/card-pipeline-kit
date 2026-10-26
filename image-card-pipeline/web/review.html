@@ -206,10 +206,11 @@ try { const u = new URL(location.href);
   if (!ZONES[nav.group]) nav.group = {log: "sources", prompts: "sources"}[nav.group] || "review";
   nav.path = u.searchParams.get("path") || ""; openFirst = u.searchParams.get("open"); } catch (e) {}
 
-let reopenKey = "";   // load() 换 list 之前正看着的那张：等数据期间人可能已经翻过页，刷新后要回到这张，而不是发请求时那张
+let reopenKey = "", packGone = false;   // packGone：这次刷新时当前包没了、退到了上级   // load() 换 list 之前正看着的那张：等数据期间人可能已经翻过页，刷新后要回到这张，而不是发请求时那张
 async function load() {
   S = await (await fetch("/api/state")).json();
   reopenKey = keyOf(list[cur]);
+  const p = livePath(); packGone = p !== nav.path; if (packGone) { nav.path = p; sel = null; syncUrl(); }
   $("proj").textContent = `${S.project} · 大包 → 小包 → 子包 · 短效长效同一棵树`;
   render();
   if (openFirst !== null) { openAt(+openFirst || 0); openFirst = null; }
@@ -227,7 +228,7 @@ async function post(url, body, done) {
 // 刷新后重画详情：回到正看着的那张；列表空了（审完最后一张）就关掉详情和从详情开的大图。
 // 人正在详情里的框里打字时，保住焦点、光标和框里还没存的字（不然焦点丢了，后面打的字会漏成快捷键）
 function redrawDetail() {
-  if (!list.length) { if ($("lb").open && lbFromDetail) $("lb").close(); $("detail").close(); return; }
+  if (!list.length || packGone) { if ($("lb").open && lbFromDetail) $("lb").close(); $("detail").close(); return; }   // 包没了：上级包里的图和刚才看的不相干，关掉详情
   const k = reopenKey, a = document.activeElement;
   const typingIn = a && a.id && ["TEXTAREA", "INPUT", "SELECT"].includes(a.tagName) && $("d-body").contains(a)
     ? {id: a.id, value: a.value, start: a.selectionStart, end: a.selectionEnd, session: noteSession} : null;
@@ -283,7 +284,9 @@ const zonePos = {}, lineLast = {};   // lineLast：每条线最后待的区
 function switchTo(g, path) {   // 去过的区回到原处；没去过的按 path 进，框落在左栏当前这一项上（上下选包）
   const p = zonePos[g];
   if (!p) { go(g, path); navToActive(); return; }
-  go(g, p.path); ({filter, flat, srcTab, sel, navSel, zone} = p); render(); window.scrollTo(0, p.y);
+  go(g, p.path); ({filter, flat, srcTab, sel, navSel, zone} = p);
+  const lp = livePath(); if (lp !== nav.path) { nav.path = lp; sel = null; syncUrl(); }   // 离开期间那个包空了（别处移走 / 后台改了）：退到最近还在的上级
+  render(); window.scrollTo(0, lp === p.path ? p.y : 0);
 }
 function samePath(g) {   // 同一路径换个区：「人物/主角」→ 那边的「人物/主角」；那边没有这个子包就退到最近的有东西的上级
   const items = zoneItems(g);
@@ -294,9 +297,19 @@ function samePath(g) {   // 同一路径换个区：「人物/主角」→ 那�
 function go(group, path) {
   if (S && group !== nav.group) { zonePos[nav.group] = {path: nav.path, filter, flat, srcTab, sel, navSel, zone, y: scrollY}; lineLast[ZONES[nav.group].line] = nav.group; }
   nav = {group, path: path || ""}; filter = "all"; flat = false; sel = null;
-  try { const u = new URL(location.href); u.searchParams.set("group", group); u.searchParams.delete("line"); path ? u.searchParams.set("path", path) : u.searchParams.delete("path");
-    u.searchParams.delete("cat"); u.searchParams.delete("sub"); history.replaceState(null, "", u); } catch (e) {}
+  syncUrl();
   $("nav").classList.remove("open"); render(); window.scrollTo(0, 0);
+}
+function syncUrl() {
+  try { const u = new URL(location.href); u.searchParams.set("group", nav.group); u.searchParams.delete("line"); nav.path ? u.searchParams.set("path", nav.path) : u.searchParams.delete("path");
+    u.searchParams.delete("cat"); u.searchParams.delete("sub"); history.replaceState(null, "", u); } catch (e) {}
+}
+// 刷新后当前包可能没了（真源移回素材区 / 丢进废稿区，包里最后一张走了）：留在本区，退到最近还在的上级；大包本身一直在
+function livePath() {
+  const items = zoneItems(nav.group);
+  let parts = nav.path ? nav.path.split("/") : [];
+  while (parts.length && !items.some(it => under(it, parts.join("/"))) && !(parts.length === 1 && S.categories.includes(parts[0]))) parts.pop();
+  return parts.join("/");
 }
 function navBtn(cls, g, path, label, n, depth) {
   const active = nav.group === g && nav.path === (path || "");
@@ -328,7 +341,7 @@ function renderNav() {
   }
   $("nav").innerHTML = h;
   $("nav").querySelectorAll("[data-g]").forEach(b => b.onclick = () => go(b.dataset.g, b.dataset.p));
-  if (zone === "nav") navSel = navBtns().findIndex(b => b.classList.contains("active"));   // 亮框由 render() 画完右边后统一标
+  if (zone === "nav") navSel = navHere(navBtns());   // 亮框由 render() 画完右边后统一标
 }
 
 // ---------------- main view ----------------
@@ -567,7 +580,7 @@ function detailBody(it) {
         <div class="m">引用它的卡出图时会拼上这段（改了以后那些卡要重新 compose）；样张不动。清空再保存 = 删掉描述。</div></div>` : ""}
       <div class="box"><h4>移出真源区</h4>
         <div class="row"><button class="b" id="d-demote">← 移回素材区（2）</button><button class="b bad" id="d-srcdrop">丢进废稿区（3）</button></div>
-        <div class="m">撤掉这次定真源：${s.history.length ? "换回上一版（历史里最近那张）" : "没有旧版，这条真源会删掉"}；原图${s.from ? `（${esc(s.from)}）` : ""}回素材区（草图回试样区）；按 3 则直接进废稿区。真源存下的那份图文件不删。${!s.history.length && s.used_by.length ? `<b>有 ${s.used_by.length} 张卡在用，删了它们就没有这个真源了。</b>` : ""}</div></div>
+        <div class="m">撤掉这次定真源：${s.history.length ? "换回上一版（历史里最近那张）" : "没有旧版，这条真源会删掉"}；按 2：${esc(originDest(s, false))}；按 3：${esc(originDest(s, true))}。真源存下的那份图文件不删。${!s.history.length && s.used_by.length ? `<b>有 ${s.used_by.length} 张卡在用，删了它们就没有这个真源了。</b>` : ""}</div></div>
       <div><h4>被这些卡引用</h4><div style="font-size:13px">${s.used_by.length ? s.used_by.map(esc).join("、") : "还没有"}</div></div>
       <div class="m">卡里引用：<code>${s.section === "characters" ? `characters: [{name: ${esc(s.name)}}]` : `${s.section}: [${esc(s.name)}]`}</code></div>
       ${s.history.length ? `<div><h4>历史版本（${s.history.length}）</h4><div class="hist">${s.history.map(hh => `<img src="${img(hh.source)}" title="${esc(hh.replaced)} 被替换 · ${esc(hh.approved)}" data-open="${esc(hh.source)}">`).join("")}</div></div>` : ""}`;
@@ -669,10 +682,12 @@ $("lb").onclick = e => { if (e.target !== $("lb-img")) $("lb").close(); };
 let sel = null, navSel = 0, zone = "main";   // zone: main 右边 · nav 左栏
 const targets = () => [...$("view").querySelectorAll(".folder, .card, .list .item")];   // .item：真源区「字」「记录」的一条条；小框（页签 / 筛选）不进方向键，归 S
 const navBtns = () => [...$("nav").querySelectorAll("[data-g]")];
+// 左栏里「现在这一项」；找不到亮着的（包刚没了）就落在本区的区名上，不掉到左栏第一项（别的区）
+const navHere = nb => { const n = nb.findIndex(b => b.classList.contains("active")); return n >= 0 ? n : Math.max(0, nb.findIndex(b => b.dataset.g === nav.group && !b.dataset.p)); };
 function markSel(scroll) {
   const t = targets(), nb = navBtns();
   if (zone === "main" && !t.length && nb.length) {   // 右边空（空包）：框交给左栏，不然哪儿都没框、方向键也没处去
-    zone = "nav"; navSel = nb.findIndex(b => b.classList.contains("active"));
+    zone = "nav"; navSel = navHere(nb);
   }
   if (sel === null) sel = 0;   // 刚进来：落在第一个文件夹 / 图上
   sel = Math.max(0, Math.min(sel, t.length - 1)); navSel = Math.max(0, Math.min(navSel, nb.length - 1));
@@ -695,7 +710,7 @@ $("nav").addEventListener("mousemove", e => {
   const n = navBtns().indexOf(e.target.closest("[data-g]"));
   zone = "nav"; if (n >= 0) navSel = n; markSel(false);
 });
-const navToActive = () => { zone = "nav"; navSel = navBtns().findIndex(b => b.classList.contains("active")); markSel(true); };
+const navToActive = () => { zone = "nav"; navSel = navHere(navBtns()); markSel(true); };
 function navParent() {   // 左栏当前框所在那一项的上一层；已经是区的顶层就不动
   const b = navBtns()[navSel];
   if (b && b.dataset.p) go(b.dataset.g, b.dataset.p.split("/").slice(0, -1).join("/"));
@@ -749,12 +764,20 @@ function moveBack() {
     post("/api/library/return", {card: it.e.card, candidate: it.e.candidate}, `${picName(it.e.candidate)} → 移回${homeOf(it.e.card)}（未审）`);
   } else if (it.type === "src") demote(it.s, false);
 }
+// 和后端 demote 同一套：原图是试样草图 → 回试样区；镜头卡出的图 → 回素材区；在素材区已定稿 → 留在素材区不动；
+// 来自参考区 / 找不到原图 → 原图不动（只撤真源）。按 3 时前两种都进废稿区
+function originDest(s, discard) {
+  const c = s.from && S.cards.find(c => c.candidates.some(x => x.name === s.from));
+  if (!c) return "原图留在原处（不是出图区 / 试样区的图）";
+  if (S.library.entries.some(e => picName(e.file) === picName(s.from) && e.status === "final")) return "原图在素材区已定稿，留在素材区不动";
+  return `原图（${picName(s.from)}）→ ${discard ? "废稿区" : c.kind === "sketch" ? "试样区" : "素材区"}`;
+}
 function demote(s, discard) {
   const force = !s.history.length && s.used_by.length > 0;
   const what = s.history.length ? "换回上一版" : force ? `删掉这条真源（${s.used_by.length} 张卡在用，删了就没有这个真源了）` : "删掉这条真源（没有旧版）";
-  if (!confirm(`把「${s.name}」${discard ? "丢进废稿区" : "移回素材区"}？会${what}，原图${discard ? "进废稿区" : "回素材区"}。`)) return;
+  if (!confirm(`把「${s.name}」${discard ? "丢进废稿区" : "移回素材区"}？会${what}；${originDest(s, discard)}。`)) return;
   post("/api/demote", {as: `${(KINDS().find(k => k.section === s.section) || {}).as || s.section}:${s.name}`, force, discard},
-    `真源「${s.name}」${s.history.length ? "换回上一版" : "撤掉"}，原图${s.from ? `（${picName(s.from)}）` : ""} → ${discard ? "废稿区" : "素材区"}`);
+    `真源「${s.name}」${s.history.length ? "换回上一版" : "撤掉"}，${originDest(s, discard)}`);
 }
 // 1 = 往前一步：出图 / 试样 / 废稿 → 素材区（要）；素材区 → 定稿。真源区已经是最后一步，不动
 function keepIt() {

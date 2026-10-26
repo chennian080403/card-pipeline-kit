@@ -143,7 +143,7 @@ def cmd_assemble(cfg, args):
         if t_out <= t_in:
             die(f"shot {index} ({file.name}): in {t_in:g}s is not before out {t_out:g}s (clip is {real:g}s)")
         shots.append({"file": file, "in": t_in, "len": t_out - t_in, "sub": shot.get("subtitle"),
-                      "speed": float(shot.get("speed", 1.0)), "n": index, "name": file.name})
+                      "speed": float(shot.get("speed", 1.0)), "n": index, "name": file.name, "audio": info["audio"]})
     if not shots:
         die("cut list has no shots")
     if len(shots) > 1:
@@ -188,6 +188,22 @@ def cmd_assemble(cfg, args):
         graph.append(f"[vf]subtitles='{ass.as_posix()}'[vs]")
         vlast = "vs"
     music = cut.get("music")
+    alast = "am"
+    if cut.get("shot_audio"):     # keep each clip's own sound (e.g. H3's native audio), crossfaded with the picture
+        vol = float(cut.get("shot_volume", 1.0))
+        for i, s in enumerate(shots):
+            if s["audio"]:
+                tempo = f",atempo={s['speed']}" if s["speed"] != 1 else ""
+                graph.append(f"[{i}:a]atrim=start={s['in']}:duration={s['len']},asetpts=PTS-STARTPTS{tempo},"
+                             f"aresample=48000,aformat=channel_layouts=stereo,volume={vol}[a{i}]")
+            else:
+                graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={s['out_len']:.3f}[a{i}]")
+        aprev = "a0"
+        for i in range(1, len(shots)):
+            graph.append(f"[{aprev}][a{i}]acrossfade=d={xf}:c1=tri:c2=tri[ax{i}]")
+            aprev = f"ax{i}"
+        graph.append(f"[{aprev}]afade=t=in:st=0:d={fade_in},afade=t=out:st={max(total - fade_out, 0):.3f}:d={fade_out}[as]")
+        alast = "as"
     if music:
         mf = cfg.resolve(music["file"])
         if not mf.is_file():
@@ -197,7 +213,10 @@ def cmd_assemble(cfg, args):
         graph.append(f"[{mi}:a]atrim=start={float(music.get('start', 0))}:duration={total:.3f},asetpts=PTS-STARTPTS,"
                      f"volume={music.get('volume', 1.0)},afade=t=in:st=0:d={music.get('fade_in', 1.0)},"
                      f"afade=t=out:st={max(total - float(music.get('fade_out', 2.5)), 0):.3f}:d={music.get('fade_out', 2.5)}[am]")
-    else:
+        if alast == "as":
+            graph.append("[as][am]amix=inputs=2:duration=first:normalize=0[amx]")
+            alast = "amx"
+    elif alast == "am":
         graph.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={total:.3f}[am]")
     out_dir = cfg.output_dir / "final"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -206,7 +225,7 @@ def cmd_assemble(cfg, args):
         k += 1
     out = out_dir / f"{args.cut}_v{k:02d}.mp4"
     cmd = [cfg.ffmpeg, "-v", "error", "-y", *inputs, "-filter_complex", ";".join(graph), "-map", f"[{vlast}]",
-           "-map", "[am]", "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+           "-map", f"[{alast}]", "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
     if args.dry_run:
         print(" ".join(cmd))

@@ -8,6 +8,8 @@ crossfade: 0.8                 # 镜间叠化秒数
 transition: fade
 fade_in: 0.6
 fade_out: 1.5
+shot_audio: false              # true = 保留每条片子自带的声音（如 H3 原生音频），随画面叠化；和 music 可同时用
+shot_volume: 1.0
 music:                         # 可删
   file: music/theme.mp3        # 相对项目根
   start: 0

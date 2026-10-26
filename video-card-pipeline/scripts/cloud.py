@@ -92,8 +92,23 @@ def ssh(cloud, iid, script, timeout=300):
     return int(data.get("exit_code", 1)), str(data.get("stdout") or "")
 
 
+TRANSIENT = ("Connection closed", "Connection reset", "ssh_failed", "kex_exchange_identification", "Broken pipe")
+
+
+def _retry(fn, tries=4):
+    """Rerun fn on a dropped SSH connection (the box's sshd cuts bursts of logins). Only for idempotent calls:
+    cp overwrites, job submit is keyed by --job-id."""
+    for attempt in range(tries):
+        try:
+            return fn()
+        except CloudError as error:
+            if attempt == tries - 1 or not any(mark in str(error) for mark in TRANSIENT):
+                raise
+            time.sleep(5 * 2 ** attempt)
+
+
 def cp(cloud, iid, source, dest, timeout=1800):
-    return call(cloud, "instance", "cp", iid, source, dest, timeout=timeout)
+    return _retry(lambda: call(cloud, "instance", "cp", iid, source, dest, timeout=timeout))
 
 
 def job_submit(cloud, iid, job_id, command, cwd=None, name=None):
@@ -102,7 +117,7 @@ def job_submit(cloud, iid, job_id, command, cwd=None, name=None):
         args += ["--cwd", cwd]
     if name:
         args += ["--name", name]
-    return (call(cloud, *args, "--", *command, timeout=300).get("job") or {})
+    return (_retry(lambda: call(cloud, *args, "--", *command, timeout=300)).get("job") or {})
 
 
 def job_show(cloud, iid, job_id):
