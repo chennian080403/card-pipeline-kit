@@ -39,6 +39,7 @@ ffmpeg 把首帧做成缓慢推近的可播 mp4（没首帧就用测试图）。
 
 ## compshare（可选示例：自己租云 GPU 跑开源模型，以优云智算 CompShare + MiniMax H3 为例）
 只经平台官方 CLI（`compshare-cli` ≥0.5.6，`uv tool install compshare-cli`；更老的版本 SSH 传参丢引号、没有 `instance monitor`）。凭据只走 `compshare config`，流水线不读。
+整体方案（机器怎么选、分几档、一批怎么跑、成本、许可、哪些没验证）见 `cloud-gpu.md`。
 换别家云平台：照 `scripts/cloud.py` 的几个调用（建机 / 开关机 / 传文件 / 远端任务）换成那家的 CLI 即可，出片和闸门逻辑不用动。
 
 **GPU 按小时计费，开关机和出片分开：**

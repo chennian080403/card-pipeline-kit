@@ -145,7 +145,7 @@ $V assemble 第一幕                        # cuts/第一幕.yaml → 成片
 | `handoff` | 网页平台：生成交接包（全部关键帧按时间排号 + 提示词 + 参数），人在网页上生成，`import` 收回 | 半自动 |
 | `command` | 任意 CLI：命令模板写出 `{out}` | 全自动 |
 | `toonflow` | 可选插件，不随本 Skill 发（放在并排的 `plugins/画布/`） | — |
-| `compshare` | 可选示例：自己租云 GPU 跑开源模型（以优云智算 + MiniMax H3 为例，换别家照 `cloud.py` 改）；`cloud up/down` 管开关机 | 全自动；盒子没开就拒，从不自己开机 |
+| `compshare` | 可选示例：自己租云 GPU 跑开源模型（以优云智算 + MiniMax H3 为例，换别家照 `cloud.py` 改）；`cloud up/down` 管开关机；整体方案见 `references/cloud-gpu.md` | 全自动；盒子没开就拒，从不自己开机 |
 
 ## 不可越过的规矩
 
@@ -175,5 +175,6 @@ video-card-pipeline/
     ecosystem-contract.md          与生图的共同约定（先读这个）
     card-schema.md                 卡片字段
     providers.md                   入口契约与实测坑
+    cloud-gpu.md                   云 GPU 出片方案：机器、档位、一批怎么跑、成本、许可
     workflow.md                    一轮怎么跑 + 接入新项目
 ```
