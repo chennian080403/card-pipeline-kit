@@ -1,0 +1,22 @@
+# 人物设定卡：一个人物的全身设定图（默认透明底），常用来出真源图，满意后 promote --as character:<名>。
+# 字段说明见 references/card-schema.md「人物设定卡」。
+id: __ID__
+title: __TITLE__
+kind: portrait
+pack: ''                  # 空则归到 人物/<名>/<group>
+group: ''
+outfit: ''                # 造型名，如 婚服；沉淀真源时默认名写成 人物名/造型
+aspect: 1024x1536
+characters:               # 只能一个人
+  - name: ''
+    expression: ''
+view: ''                  # 视角（英文），空则 front three-quarter view, face fully visible
+pose: ''                  # 姿势（英文），空则 standing naturally, weight even, arms relaxed
+costume: ''               # 服装描述（英文）；有服装参考图时可空
+transparent: true         # 设定图默认透明底；要带背景改 false
+hard_rules: []
+
+# ---- 以下由流水线记录（状态 / 反馈 / 来源），不用手改 ----
+status: draft
+created: __DATE__
+slug: __SLUG__

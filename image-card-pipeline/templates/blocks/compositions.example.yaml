@@ -1,0 +1,4 @@
+# 构图块：key -> 英文原句。卡里写 key，compose 时换成这里的句子。
+wide_long_facing: "Wide horizontal shot, both figures in frame, facing each other, generous negative space above."
+close_up_left: "Tight close-up on the left figure, shallow depth of field, background blurred."
+full_body_setup: "Full-body setup shot, straight-on, subject centred, feet visible, neutral pose."

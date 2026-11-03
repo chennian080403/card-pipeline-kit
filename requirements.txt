@@ -1,0 +1,3 @@
+# 视频另需 ffmpeg（不是 Python 包）：macOS 用 brew install ffmpeg，Linux 用发行版的包管理器
+pyyaml
+pillow

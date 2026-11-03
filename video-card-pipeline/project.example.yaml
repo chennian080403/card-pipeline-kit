@@ -1,0 +1,77 @@
+# video-card-pipeline · 项目配置示例
+#
+# 单独用：复制成 project.yaml，`vpipeline.py --config project.yaml init`。
+# 和生图一起用：在 image-card-pipeline 的 project.yaml 上跑 `init`，只会追加下面的 video: 段，
+#   project / paths.sources / library 三项两边共用（真源一份、素材库一份）。
+# 凭据只写"环境变量名"，绝不把密钥值写进这个文件。
+
+project:
+  name: my-video-project
+  root: .                          # 相对本文件；所有相对路径从这里算
+
+paths:
+  sources: sources.yaml            # 共用真源登记表（与生图同一份）
+
+# 真源种类（可缺省）：默认 人物 characters / 道具 props / 风格 styles；这里加新种类或改显示名
+# sources:
+#   kinds:
+#     scenes: {label: 场景, as: scene}                  # 卡里 scenes: [城门]，作参考图随片送
+#     lenses: {label: 镜头语言, as: lens, text: true}   # 带描述：拼进提示词
+
+library:
+  kind: none                       # none | local（文件夹 + library.json）| http（素材库服务）
+  # root: 素材库
+
+video:
+  paths:
+    cards: video-cards             # 视频卡
+    cuts: cuts                     # 剪辑单
+    blocks: video-blocks           # style.txt / motion_tail.txt
+    output: video-output           # takes / runs / sheets / review / manifest
+
+  # 和生图联动（可选）。不写时：若本文件同时有生图的 paths.cards，就视为同一项目。
+  link:
+    image_config: ''               # 生图项目的 project.yaml
+    image_skill: ''                # 留空自动找并排的 image-card-pipeline（首帧问题回写生图卡用）
+
+  providers:
+    default: mock
+    entries:
+      mock:      {kind: mock, duration: 2}                 # 不联网，ffmpeg 合成一条可播的片子
+      agnes:     {kind: agnes, api_key_env: AGNES_API_KEYS, min_gap: 90}   # 可选示例：一个真实的出片 API（免费档排队、限速）
+      web:       {kind: handoff, url: https://example.com/video, open: false}
+      cli:       {kind: command, command: "my-video-cli --image {first_frame} --prompt-file {prompt_file} --out {out}"}
+
+  models:
+    default: dry
+    dry:          {provider: mock}
+    agnes-flash:  {provider: agnes, model: agnes-video-2.5-flash, free: true, min_seconds: 4, max_seconds: 12}
+    agnes-v2:     {provider: agnes, model: agnes-video-v2.0, free: true}
+    web-manual:   {provider: web, model: 网页上选的模型}
+
+  # 审片台：人看片、给结论、写备注、打时间点标注的地方
+  station:
+    kind: builtin                  # builtin = 本 skill 自带审片页（review_web.py）；plugin = 你自己的放映厅
+    auto_submit: true
+    # kind: plugin
+    # module: templates/station_plugin.example.py   # 样板：片子进文件夹，人填旁边的 review.json；照它改成你的放映厅
+    # inbox: 待审片
+
+  # 看板：默认不用。可挂看板插件（如 Toonflow 画布，放在并排的 plugins/画布/），不配就不加载
+  board:
+    kind: none
+
+  hooks:
+    post: []                       # 后期：[{name: upscale, command: "python3 x.py {in} {out}"}]
+
+  tools:
+    ffmpeg: ffmpeg
+
+  rules:
+    require_approval: true         # 非 free 的模型生成前必须 --approved "人的原话"（占位符 / 过短被拒）
+    keyframes: any                 # any | final（只认素材库已定稿的图当关键帧：首帧、中间几张、尾帧）；旧名 first_frame 照认
+    final_dirs: []                 # keyframes: final 时，这些目录里的文件算定稿
+    poll_timeout: 1200             # 轮询多久没出片就先停（任务保留，collect 续上，不重提）
+    autosave: true                 # 项目文件夹是自己的 git 仓库时，写命令前后自动存版本；false 关掉
+    fps: 0                         # 非 0 时剪辑单必须用这个帧率
+    max_prompt_chars: {warn: 1500, reject: 2500}

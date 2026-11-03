@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>审片台</title>
+<style>
+:root{--bg:#f6f6f4;--panel:#fff;--ink:#1d1d1b;--muted:#6b6b66;--line:#e2e2dc;--pass:#2f7d4f;--fail:#b23b3b;--mid:#a26b12;--accent:#2d5fa8}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--panel:#1d1d1b;--ink:#ecebe6;--muted:#9a9993;--line:#33332f;--pass:#5bb37f;--fail:#e06c6c;--mid:#d9a441;--accent:#7aa5e6}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,"PingFang SC",sans-serif}
+header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+header h1{font-size:16px;margin:0}header .muted{color:var(--muted)}
+main{display:grid;grid-template-columns:300px 1fr;min-height:calc(100vh - 50px)}
+@media (max-width:800px){main{grid-template-columns:minmax(0,1fr)}aside{max-height:38vh;border-right:0;border-bottom:1px solid var(--line)}}
+aside{border-right:1px solid var(--line);overflow:auto;max-height:calc(100vh - 50px)}
+.group{padding:8px 16px 4px;color:var(--muted);font-size:12px;letter-spacing:.04em}
+.item{padding:8px 16px;cursor:pointer;border-left:3px solid transparent;display:flex;justify-content:space-between;gap:8px}
+.item:hover{background:var(--panel)}.item.on{background:var(--panel);border-left-color:var(--accent)}
+.item small{color:var(--muted);display:block}
+.tag{font-size:12px;padding:1px 6px;border-radius:9px;border:1px solid var(--line);white-space:nowrap;height:fit-content}
+.tag.pass,.tag.good{color:var(--pass);border-color:var(--pass)}.tag.fail,.tag.bad{color:var(--fail);border-color:var(--fail)}.tag.borderline,.tag.discard{color:var(--mid);border-color:var(--mid)}
+section{padding:16px;max-width:1100px;min-width:0}
+video{width:100%;max-height:62vh;background:#000;border-radius:6px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;align-items:center}
+button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.v.on.good{background:var(--pass);color:#fff;border-color:var(--pass)}
+button.v.on.bad{background:var(--fail);color:#fff;border-color:var(--fail)}
+button.v.on.discard{background:var(--mid);color:#fff;border-color:var(--mid)}
+.box{border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 0;background:var(--panel)}
+.box h3{font-size:14px;margin:0 0 8px;display:flex;gap:8px;align-items:baseline}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media (max-width:640px){.two{grid-template-columns:1fr}}
+.seg h3 a{color:var(--accent);cursor:pointer;font-weight:normal;font-size:12px}
+button.save{background:var(--accent);color:#fff;border-color:var(--accent)}
+textarea,input[type=text]{width:100%;font:inherit;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+textarea{min-height:70px}
+.marks div{padding:4px 0;border-bottom:1px dashed var(--line);display:flex;gap:8px}
+.marks a{color:var(--accent);cursor:pointer;min-width:52px}
+.meta{color:var(--muted);font-size:12px;word-break:break-all}
+.refs{display:flex;gap:12px;flex-wrap:wrap}.refs img{max-height:120px;border-radius:4px;border:1px solid var(--line)}
+.empty{padding:40px 16px;color:var(--muted)}
+#msg{color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1>审片台</h1><span class="muted" id="project"></span><span class="muted">看片 → 整条或逐段给 满意 / 不满意 / 放弃，分开写满意和不满意的地方 → 保存。流水线 <code>sync</code> 时取回。</span></header>
+<main>
+<aside id="list"></aside>
+<section id="view"><div class="empty">左侧选一条片子。</div></section>
+</main>
+<script>
+// Review protocol (card-core core.station): good / bad / discard per whole take (segment 0) or per segment,
+// liked / disliked kept apart; every write carries the token, the actor and the revision this page showed.
+let data = {takes: []}, current = null;
+const ACTOR = 'user@browser';
+const LABEL = {good: '满意', bad: '不满意', discard: '放弃'};
+const AGG = {pass: '通过', fail: '不通过', borderline: '待定'};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const fmt = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+const drafts = {};   // segment -> {verdict, liked, disliked}; marks / note live on segment 0
+
+async function load(keep, local) {
+  data = await (await fetch('/api/state')).json();
+  document.getElementById('project').textContent = data.project;
+  renderList();
+  const name = keep || (current && current.name) || decodeURIComponent(location.hash.slice(1));
+  if (data.takes.find(t => t.name === name)) open(name, local);
+}
+
+// What the person typed but has not saved yet, box by box (kept across a reload of the same take).
+function unsaved() {
+  const out = {};
+  document.querySelectorAll('.box').forEach(box => {
+    const n = +box.dataset.seg;
+    out[n] = {...drafts[n], liked: box.querySelector('.liked').value, disliked: box.querySelector('.disliked').value};
+    if (n === 0) out[0].note = box.querySelector('.note').value;
+  });
+  return out;
+}
+
+function renderList() {
+  const groups = {};
+  for (const t of data.takes) (groups[t.group || '未分组'] ??= []).push(t);
+  const el = document.getElementById('list');
+  if (!data.takes.length) { el.innerHTML = '<div class="empty">还没有提交到审片台的片子。</div>'; return; }
+  el.innerHTML = Object.entries(groups).map(([g, items]) => `<div class="group">${esc(g)}</div>` + items.map(t => {
+    const whole = (t.reviews['0'] || {}).verdict;
+    const tag = whole === 'discard' ? ['discard', '放弃'] : t.verdict ? [t.verdict, AGG[t.verdict]] : ['', '未审'];
+    return `<div class="item ${current && current.name === t.name ? 'on' : ''}" data-name="${esc(t.name)}">
+      <div>${esc(t.card)} ${esc(t.title)}<small>${esc(t.name)}${t.derived_from ? ' · 后期' : ''}${t.segments.length > 1 ? ' · ' + t.segments.length + ' 段' : ''}</small></div>
+      <span class="tag ${tag[0]}">${tag[1]}</span></div>`;
+  }).join('')).join('');
+  el.querySelectorAll('.item').forEach(n => n.onclick = () => open(n.dataset.name));
+}
+
+function reviewBox(n, title, extra) {
+  return `<div class="box ${n ? 'seg' : ''}" data-seg="${n}"><h3>${title}</h3>
+    <div class="row">${Object.keys(LABEL).map(v => `<button class="v ${v}" data-v="${v}">${LABEL[v]}</button>`).join('')}</div>
+    <div class="two"><textarea class="liked" placeholder="满意的地方"></textarea><textarea class="disliked" placeholder="不满意的地方"></textarea></div>
+    ${extra || ''}
+    <div class="row"><button class="save">保存${n ? '这一段' : '整条'}</button><span class="msg meta"></span></div></div>`;
+}
+
+function open(name, local) {
+  if (!current || current.name !== name) local = null;
+  current = data.takes.find(t => t.name === name);
+  history.replaceState(null, '', '#' + encodeURIComponent(name));
+  for (const k of Object.keys(drafts)) delete drafts[k];
+  const segs = current.segments.length > 1 ? current.segments : [];
+  for (const n of [0, ...segs.map(s => s.n)]) {
+    const r = current.reviews[String(n)] || {};
+    drafts[n] = {verdict: r.verdict || '', liked: r.liked || '', disliked: r.disliked || ''};
+  }
+  drafts[0].note = current.note || '';
+  drafts[0].marks = [...(current.marks || [])];
+  for (const [n, d] of Object.entries(local || {})) if (drafts[n]) drafts[n] = d;
+  renderList();
+  const p = current.probe || {};
+  const marks = `<textarea class="note" placeholder="其他备注（原因、下一步）"></textarea>
+    <div class="row"><input type="text" id="markText" placeholder="标注内容（记在播放器当前时间）" style="flex:1">
+      <button id="addMark">在当前时间加标注</button></div><div class="marks" id="marks"></div>`;
+  document.getElementById('view').innerHTML = `
+    <video id="player" src="${current.video}" controls preload="metadata"></video>
+    ${reviewBox(0, '整条' + (segs.length ? '（给了整条结论就以它为准）' : ''), marks)}
+    ${segs.map(s => reviewBox(s.n, `第${s.n}段 · ${esc(s.label)} <a data-t="${s.start}">${fmt(s.start)}–${fmt(s.end)} 跳到</a>`)).join('')}
+    <div class="refs">${current.first_frame ? `<div><div class="meta">首帧</div><img src="${current.first_frame}"></div>` : ''}
+      ${current.sheet ? `<div><div class="meta">首 / 中 / 尾帧</div><img src="${current.sheet}"></div>` : ''}</div>
+    <p class="meta">${esc(current.name)} · ${esc(current.model)} · ${esc(current.mode)} · ${p.duration ?? '?'}s · ${p.width ?? '?'}×${p.height ?? '?'}
+      ${current.derived_from ? ' · 源片 ' + esc(current.derived_from) : ''}</p>
+    <p class="meta">${esc(current.prompt)}</p>
+    ${current.history.length ? `<p class="meta">历史结论 ${current.history.length} 条（全部留在 activity-log.jsonl）</p>` : ''}`;
+  document.querySelectorAll('.box').forEach(box => {
+    const n = +box.dataset.seg, d = drafts[n];
+    box.querySelector('.liked').value = d.liked;
+    box.querySelector('.disliked').value = d.disliked;
+    box.querySelectorAll('button.v').forEach(b => b.onclick = () => { d.verdict = d.verdict === b.dataset.v ? '' : b.dataset.v; paint(); });
+    box.querySelector('.save').onclick = () => save(n, box);
+  });
+  document.querySelector('.note').value = drafts[0].note;
+  document.querySelectorAll('.seg h3 a').forEach(a => a.onclick = () => { const v = document.getElementById('player'); v.currentTime = +a.dataset.t; v.play(); });
+  document.getElementById('addMark').onclick = () => {
+    const t = document.getElementById('player').currentTime || 0;
+    const input = document.getElementById('markText');
+    drafts[0].marks.push({t: Math.round(t * 100) / 100, text: input.value.trim()});
+    drafts[0].marks.sort((a, b) => a.t - b.t);
+    input.value = '';
+    paint();
+  };
+  paint();
+}
+
+function paint() {
+  document.querySelectorAll('.box').forEach(box => {
+    const d = drafts[+box.dataset.seg];
+    box.querySelectorAll('button.v').forEach(b => b.classList.toggle('on', b.dataset.v === d.verdict));
+  });
+  document.getElementById('marks').innerHTML = drafts[0].marks.map((m, i) =>
+    `<div><a data-t="${m.t}">${fmt(m.t)}</a><span style="flex:1">${esc(m.text) || '<span class=meta>（无文字）</span>'}</span>
+     <button data-i="${i}" style="padding:0 8px">删</button></div>`).join('');
+  document.querySelectorAll('.marks a').forEach(a => a.onclick = () => { const v = document.getElementById('player'); v.currentTime = +a.dataset.t; v.pause(); });
+  document.querySelectorAll('.marks button').forEach(b => b.onclick = () => { drafts[0].marks.splice(+b.dataset.i, 1); paint(); });
+}
+
+async function save(n, box) {
+  const d = drafts[n];
+  d.liked = box.querySelector('.liked').value;
+  d.disliked = box.querySelector('.disliked').value;
+  const body = {name: current.name, revision: data.revision, segment: n, verdict: d.verdict, liked: d.liked, disliked: d.disliked};
+  if (n === 0) Object.assign(body, {note: box.querySelector('.note').value, marks: d.marks});
+  const res = await fetch('/api/review', {method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Review-Token': data.token, 'X-Actor': ACTOR},
+    body: JSON.stringify(body)});
+  const out = await res.json();
+  const msg = box.querySelector('.msg');
+  const local = unsaved();
+  if (res.ok) { delete local[n]; await load(current.name, local); return flash(n, '已保存'); }
+  if (res.status === 409 || res.status === 403) {
+    await load(current.name, local);    // fresh token / revision; nothing typed is lost
+    return flash(n, res.status === 409 ? '别人刚审过，页面已刷新，你写的内容还在，确认后再点保存' : '页面令牌已更新，再点一次保存');
+  }
+  msg.textContent = '保存失败：' + out.error;
+}
+
+function flash(n, text) {
+  const box = document.querySelector(`.box[data-seg="${n}"] .msg`);
+  if (box) box.textContent = text;
+}
+
+load();
+</script>
+</body>
+</html>

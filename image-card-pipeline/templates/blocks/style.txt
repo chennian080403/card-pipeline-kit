@@ -1,0 +1,5 @@
+# 风格前缀（blocks/style.txt 的内容）—— 每个 prompt 都拼在最前面。
+# 这里只放"介质 + 渲染口径"：和题材无关的整体画面口径。
+# "保持参考图身份""不要文字水印"由 tail.txt 统一兜底，这里不重复。
+# 项目特有的东西放 prompt_zone 的模板或单张卡里。
+Photorealistic 2.5D render, cinematic film still, soft rim light, fine skin texture.

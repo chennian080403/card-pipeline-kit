@@ -1,0 +1,3 @@
+# 尾段（blocks/tail.txt）—— 拼在提示词最后，统一兜底"身份不变 + 画面里不要有什么"；style.txt 不再重复。
+Keep every face and costume exactly as in the reference images. Single continuous frame.
+No text, no letters, no captions, no watermark, no logo, no signature.

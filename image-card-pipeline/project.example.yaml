@@ -1,0 +1,96 @@
+# image-card-pipeline · 项目配置示例
+#
+# 复制成项目里的 project.yaml，按需改路径与供应商。
+# 凭据只写"环境变量名"，绝不把密钥值写进这个文件。
+# 运行： python3 <skill>/scripts/pipeline.py --config project.yaml doctor
+
+project:
+  name: my-project
+  root: .                        # 相对本文件；所有相对路径都从这儿算
+
+paths:
+  prompt_zone: prompt-zone       # 可复用提示词模板目录（**/*.md，按 ## 小节拆分）
+  cards: cards                   # 卡片目录（*.yaml）
+  blocks: blocks                 # style.txt / tail.txt / compositions.yaml / environments.yaml
+  output: output                 # 结果、候选、run 记录、manifest 都在这下面
+  sources: sources.yaml          # 真源登记表（可缺省）
+  inspiration: inspiration       # 短效系统：灵感区（inspire 存这里）
+  promoted: refs                 # promote 把认可的图拷到 refs/<名>/ 再登记进 sources.yaml
+
+# 真源种类（可缺省）：默认 人物 characters / 道具 props / 风格 styles。
+# 加一种就多一节真源：卡里写同名字段，promote --as <as>:<名>，审核页「定为真源」跟着多选项。
+# sources:
+#   kinds:
+#     scenes: {label: 场景, as: scene}                  # 存图：长相下拉里多一个「场景」
+#     lenses: {label: 镜头语言, as: lens, text: true}   # 存图 + 描述：多一个按钮，描述拼进提示词
+
+# 供应商：模型别名 -> 用哪个 provider、哪个上游模型。
+# kind 三选一：openai_images | chat_completions | mock
+providers:
+  default: mock
+  entries:
+    mock:
+      kind: mock
+    main:
+      kind: openai_images
+      base_url: ${IMAGE_BASE_URL}          # 例：https://api.example.com/v1
+      api_key_env: IMAGE_API_KEY           # 密钥只从环境变量来
+      api_key_file: ''                     # 可选：launchd 场景下读文件
+      timeout: 300
+      max_inline_refs: 8                   # 参考图少则内联（multipart），不经图床
+      max_inline_bytes: 12582912
+    alt:
+      kind: chat_completions               # 图在 message.images[] 的兼容端点
+      base_url: ${ALT_BASE_URL}
+      api_key_env: ALT_API_KEY
+      timeout: 240
+      attempts: 3                          # 上游会概率性回 200 空图，必须重试
+      max_refs: 4
+
+models:
+  default: dry                             # 出厂默认走 mock，不配密钥就能跑通全链路；
+                                           # 接好真供应商后把这里改成你的别名（如 main-model）
+  main-model: {provider: main, model: some-image-model}
+  main-hq:    {provider: main, model: another-image-model, quality: high}
+  alt-model:  {provider: alt,  model: vendor-image-model}
+  dry:        {provider: mock}
+
+# 图床：只在"参考图必须以公网 URL 送出"时才需要。默认 none = 一律内联。
+image_host:
+  kind: none                     # none | cli | http
+  # kind: cli 时：
+  # command: python3 /path/to/your-upload.py      # 每个文件一行公网 URL 打到 stdout
+  # name_type: hash
+  # timeout: 60
+  # kind: http 时：
+  # url: http://127.0.0.1:9000/upload
+  # token_env: HOST_TOKEN
+
+# 素材库：可选。登记的是"草稿"，定稿永远由人做。
+# 资产包第一层（大包）。四个区共用一棵树：大包/小包/子包，卡里写 pack: 人物/主角/氛围测试
+packs:
+  categories: [人物, 道具, 场景, 风格, 测试]
+
+# 和视频联动（可选，生态契约 §5.1）：视频的 project.yaml 是另一份时写这里，素材区就会标出哪些图正被视频卡当关键帧。
+# 两边共用同一份 project.yaml（带 video: 段）时不用写。
+# link:
+#   video_config: ../视频项目/project.yaml
+
+library:
+  kind: none                     # none | http | local（文件夹 + library.json，不用起服务）
+  # root: 素材库                  # local 时必填；http 时是素材库根目录
+  # url: http://127.0.0.1:9000
+  # root: /absolute/path/to/library-root     # 文件路径相对它来写
+  # catalog_path: /api/catalog
+  # ingest_path: /api/agent/ingest
+  # token_header: X-Review-Token
+  # token_env: LIB_TOKEN
+  # actor: agent:pipeline
+
+rules:
+  require_approval: true         # 付费生成前必须 --approved "<谁/何时>"
+  autosave: true                 # 项目文件夹是 git 仓库时，写命令前后自动存版本（版本 历史 / 取 / 回退）
+  reviewers: [claude, human]     # 谁能给看图结论（review --by）；claude = 主模型，外包的助手不在其中
+  max_prompt_chars:              # 实测提示词过长上游会 504，按项目标定
+    warn: 2400
+    reject: 3200

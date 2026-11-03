@@ -1,0 +1,11 @@
+{
+  "consumers": [
+    "video-card-pipeline",
+    "image-card-pipeline"
+  ],
+  "docs": {
+    "video-card-pipeline/references/ecosystem-contract.md": [
+      "image-card-pipeline/references/ecosystem-contract.md"
+    ]
+  }
+}

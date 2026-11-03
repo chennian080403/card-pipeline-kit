@@ -1,0 +1,19 @@
+# 一张图 = 一张卡。只填用得上的行，空着的删掉也行（存盘时空字段会自动去掉）。
+# 不常用字段（参考图 refs、构图 composition、环境 environment、硬规则 hard_rules…）见 references/card-schema.md
+id: __ID__
+title: __TITLE__
+pack: ''                  # 资产包 大包/小包/子包，如 人物/主角/氛围测试；空则自动推断
+group: ''                 # 同组卡共用批次
+outfit: ''                # 造型名，如 婚服；网页沉淀人物真源时默认名会写成 人物名/造型（主角/婚服）
+aspect: 1024x1024         # WxH
+characters:               # 出场人物，名字对应 sources.yaml 里的真源
+  - name: ''
+    expression: ''
+props: []                 # 道具真源名，如 [主角/剑]
+styles: []                # 风格真源名，如 [水墨_冷色]
+action: ''                # 这张图发生什么（英文一段）
+
+# ---- 以下由流水线记录（状态 / 反馈 / 来源），不用手改 ----
+status: draft
+created: __DATE__
+slug: __SLUG__
