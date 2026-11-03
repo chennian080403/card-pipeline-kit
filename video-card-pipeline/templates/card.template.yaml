@@ -22,6 +22,7 @@ motion: >-
   Slow cinematic push-in, restrained subtle acting. ...
 hard_rules: []                 # 本镜额外硬规则（英文句）
 motion_tail: ''                # 留空用 blocks/motion_tail.txt
+# style_block: ''              # 写了就替换 blocks/style.txt 的固定头（这组画风和项目默认不同时用）
 subtitle: ''                   # 台词/字幕：只给剪辑单用，不进生成提示词
 hold: ''                       # 非空即锁：validate 报错、generate 拒跑
 created: ''

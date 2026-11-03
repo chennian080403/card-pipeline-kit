@@ -20,11 +20,12 @@
 | `motion` | 英文：运镜、谁做什么、表情、环境里什么在动。参考图已定画面时只写动作和镜头，不重复描述画面 |
 | `hard_rules` | 本镜额外硬规则（英文句） |
 | `motion_tail` | 覆盖 `video-blocks/motion_tail.txt` 的固定尾巴 |
+| `style_block` | 覆盖 `video-blocks/style.txt` 的固定头：一组镜头画风和项目默认不同时用；写了就不读 style.txt，写 `''` 等于不要固定头 |
 | `subtitle` | 台词/字幕，只给剪辑单用，不进提示词 |
 | `audio` | true 时请求带声（画布模型支持切换时） |
 | `hold` | 非空即锁 |
 
-提示词 = `video-blocks/style.txt` + `styles` 等带描述种类的描述 + `motion` + `hard_rules` + 尾巴（`#` 开头的行不进）。
+提示词 = `video-blocks/style.txt`（卡里有 `style_block` 就用它）+ `styles` 等带描述种类的描述 + `motion` + `hard_rules` + 尾巴（`#` 开头的行不进）。
 
 ## take（一条片子）的元数据 `video-output/takes/<条>.json`
 

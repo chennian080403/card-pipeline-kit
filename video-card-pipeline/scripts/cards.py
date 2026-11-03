@@ -195,7 +195,8 @@ def kind_texts(cfg, card):
 
 def compose_prompt(cfg, card):
     """style block + text kinds' descriptions (styles …) + motion + hard rules + tail. Dialogue never goes in: subtitles belong to the cut list."""
-    parts = [_block_text(cfg, "style.txt"), *kind_texts(cfg, card)[0].values(), str(card.get("motion") or "").strip()]
+    style = card["style_block"] if "style_block" in card else _block_text(cfg, "style.txt")
+    parts = [str(style or "").strip(), *kind_texts(cfg, card)[0].values(), str(card.get("motion") or "").strip()]
     parts += [str(rule).strip() for rule in card.get("hard_rules") or []]
     tail = card.get("motion_tail") or _block_text(cfg, "motion_tail.txt") or DEFAULT_TAIL
     parts.append(tail.strip())
@@ -207,7 +208,7 @@ KEYFRAME_LIMIT = {"handoff": None, "command": None}   # None = takes them all; o
 # top-level card fields the pipeline reads (plus every section in sources.kinds); anything else gets a note
 CARD_FIELDS = {"id", "title", "group", "act", "model", "first_frame", "keyframes", "last_frame", "characters", "styles",
                "refs", "mode", "duration", "aspect", "resolution", "takes", "motion", "hard_rules", "motion_tail",
-               "subtitle", "audio", "hold", "created", "pack", "chosen", *SYSTEM_KEYS}
+               "style_block", "subtitle", "audio", "hold", "created", "pack", "chosen", *SYSTEM_KEYS}
 
 
 def keyframe_limit(spec):
