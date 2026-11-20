@@ -1943,6 +1943,136 @@ def check_46(ctx):
     return True, ""
 
 
+def check_47(ctx):
+    """P2：inspire remove <完整ID> 可恢复软下架（拒前缀、零副作用、隐藏且禁新试样按编号引用、原文件保留、restore 与重 add 恢复）。"""
+    problems = []
+    img_file = _external_image(ctx, "可恢复下架参考.png")
+    added = ctx.run("inspire", "add", str(img_file), "--pack", "风格/下架测试", "--approved", "用户：收进参考区测下架")
+    if added.returncode != 0:
+        return False, "inspire add 失败: " + brief(added, 180)
+    ident = ctx.out(added).splitlines()[0].split()[0]
+    stored = next((ctx.tmp / "inspiration").glob(f"{ident}_*"), None)
+    if not stored or not stored.is_file():
+        return False, f"找不到落盘的参考图文件: {ident}"
+
+    # 1. 前缀或不存在的 ID 必须拒收且零副作用
+    before_commits = ctx.commit_count()
+    for bad_arg in (ident[:4], "deadbeef"):
+        bad = ctx.run("inspire", "remove", bad_arg)
+        if bad.returncode == 0 or ctx.commit_count() != before_commits:
+            problems.append(f"非法 inspire remove ({bad_arg}) 未拒收或产生了提交: " + brief(bad, 160))
+
+    # 2. 完整 ID 软下架
+    rem = ctx.run("inspire", "remove", ident, "--note", "风格换了")
+    if rem.returncode != 0 or "removed" not in ctx.out(rem):
+        return False, "inspire remove 失败: " + brief(rem, 180)
+    if not stored.is_file():
+        problems.append("inspire remove 删除了磁盘原文件（应保留防旧卡断链）")
+
+    # 3. 默认 list 与 state 隐藏；--removed / --all 只读可见
+    before_ro = ctx.commit_count()
+    list_default = ctx.run("inspire", "list")
+    list_removed = ctx.run("inspire", "list", "--removed")
+    list_all = ctx.run("inspire", "list", "--all")
+    if ctx.commit_count() != before_ro:
+        problems.append("只读 inspire list --removed/--all 产生了 git 提交")
+    if ident in ctx.out(list_default):
+        problems.append("下架后 inspire list 仍列出该编号")
+    if ident not in ctx.out(list_removed) or "[removed]" not in ctx.out(list_removed):
+        problems.append("inspire list --removed 未列出已下架编号: " + brief(list_removed, 160))
+    if ident not in ctx.out(list_all) or "[removed]" not in ctx.out(list_all):
+        problems.append("inspire list --all 未标出 [removed]")
+    st = json.loads(ctx.run("state", "--json").stdout)
+    if any(i.get("id") == ident for i in st.get("inspiration") or []):
+        problems.append("下架后 state 仍包含该参考图")
+
+    # 4. 新试样按编号引用（完整 ID / 前缀）均被拒收；显式文件路径仍可用
+    for ref_val in (ident, ident[:5]):
+        sk = ctx.run("sketch", "p2-ref-blocked", "--no-generate", "--pack", "风格/下架测试", "--ref", ref_val)
+        if sk.returncode == 0:
+            problems.append(f"已下架参考图编号 ({ref_val}) 仍能被 sketch --ref 引用")
+    sk_path = ctx.run("sketch", "p2-ref-path-ok", "--no-generate", "--pack", "风格/下架测试", "--ref", str(stored))
+    if sk_path.returncode != 0:
+        problems.append("保留的磁盘原文件路径无法被草图引用: " + brief(sk_path, 160))
+
+    # 5. inspire restore 恢复后重新可见且可按编号引用
+    res = ctx.run("inspire", "restore", ident)
+    if res.returncode != 0 or "restored" not in ctx.out(res):
+        problems.append("inspire restore 失败: " + brief(res, 180))
+    if ident not in ctx.out(ctx.run("inspire", "list")):
+        problems.append("restore 后 inspire list 仍找不到")
+    sk_ok = ctx.run("sketch", "p2-ref-restored", "--no-generate", "--pack", "风格/下架测试", "--ref", ident)
+    if sk_ok.returncode != 0:
+        problems.append("restore 后 sketch --ref 仍不可用: " + brief(sk_ok, 160))
+
+    # 6. 再次下架后，重跑 inspire add 同一文件也能恢复
+    ctx.run("inspire", "remove", ident)
+    readd = ctx.run("inspire", "add", str(img_file), "--pack", "风格/下架测试", "--approved", "用户：重新启用这张参考")
+    if readd.returncode != 0 or "restored" not in ctx.out(readd):
+        problems.append("下架后重跑 inspire add 未恢复条目: " + brief(readd, 180))
+    st2 = json.loads(ctx.run("state", "--json").stdout)
+    if not any(i.get("id") == ident for i in st2.get("inspiration") or []):
+        problems.append("re-add 恢复后 state 里未重新出现")
+
+    ctx.git("add", "-A")
+    ctx.git("commit", "-qm", "自检：P2 inspire remove/restore 收尾")
+    return (not problems), "；".join(problems[:4])
+
+
+def check_48(ctx):
+    """P2：审核页 POST /api/inspire/remove 移出参考区、GET /file 能读 output/variants/、前端含移出按钮与原图/2K/4K 切换。"""
+    problems = []
+    img_file = _external_image(ctx, "网页移出参考.png")
+    added = ctx.run("inspire", "add", str(img_file), "--pack", "风格/网页下架", "--approved", "用户：网页测移出")
+    if added.returncode != 0:
+        return False, "inspire add 失败: " + brief(added, 180)
+    ident = ctx.out(added).splitlines()[0].split()[0]
+    stored = next((ctx.tmp / "inspiration").glob(f"{ident}_*"), None)
+
+    proc, port = start_review_web(ctx)
+    try:
+        if port is None:
+            return False, "审核页没能启动"
+        # 1. POST /api/inspire/remove 移出参考区
+        bad = post(port, "/api/inspire/remove", {"id": ident[:4]})
+        if bad.get("ok"):
+            problems.append("/api/inspire/remove 接受了短前缀")
+        reply = post(port, "/api/inspire/remove", {"id": ident})
+        if not reply.get("ok"):
+            problems.append("/api/inspire/remove 失败: " + json.dumps(reply, ensure_ascii=False)[:180])
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=30) as resp:
+            st = json.loads(resp.read().decode("utf-8"))
+        if any(i.get("id") == ident for i in st.get("inspiration") or []):
+            problems.append("/api/inspire/remove 后 /api/state 仍包含该参考图")
+        if not stored or not stored.is_file():
+            problems.append("/api/inspire/remove 后原文件不在硬盘上了")
+
+        # 2. 变体文件可通过 /file?path=output/variants/... 正常读取
+        card = next((c for c in st.get("cards") or [] if c["id"] == CARD), {})
+        vfile = next((v["file"] for x in card.get("candidates") or [] for v in (x.get("variants") or []) if v.get("exists")), "")
+        if not vfile:
+            problems.append("state 中未找到已存在的 variant 文件（依赖 check_43）")
+        else:
+            from urllib.parse import quote
+            url = f"http://127.0.0.1:{port}/file?path={quote(vfile)}"
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                data = resp.read()
+                if resp.status != 200 or not data.startswith(b"\x89PNG"):
+                    problems.append(f"GET {vfile} 未返回合法 PNG (status={resp.status})")
+    finally:
+        _stop(proc)
+
+    # 3. 前端包含移出参考区按钮与版本切换 UI
+    html = (SKILL / "web" / "review.html").read_text(encoding="utf-8")
+    for token in ("/api/inspire/remove", "d-insp-remove", "versionsFor", "applyVersion", "d-verbox"):
+        if token not in html:
+            problems.append(f"review.html 缺少 {token}")
+
+    ctx.git("add", "-A")
+    ctx.git("commit", "-qm", "自检：P2 审核页接口与变体读取收尾")
+    return (not problems), "；".join(problems[:4])
+
+
 CHECKS = {
     1: ("init 后 .git / .gitignore 存在，doctor 报 version : git", check_01),
     2: ("new-card 三种卡型都能建，默认卡 validate 返回 0", check_02),
@@ -1990,11 +2120,13 @@ CHECKS = {
     44: ("P1 归属校验：跨卡 review/pick/note/register/variant 被拒；_find_candidate 精确匹配不误撞 _10", check_44),
     45: ("P1 细节修复：路径段拦截不误伤含 verify/upscale 的父目录；review.html 按 kind: sketch 判断草图卡", check_45),
     46: ("词表联动、v2 写入与溯源、确定性台账、体检分级和检索", check_46),
+    47: ("P2 参考区下架：inspire remove 需完整 ID、软下架禁编号引用保原文件、restore 与重 add 可恢复", check_47),
+    48: ("P2 审核页增强：POST /api/inspire/remove、GET /file 读取 variants、前端移出按钮与原图/2K/4K 切换", check_48),
 }
 
 # 14 要放在所有写操作之后；13 也在最后扫一遍更可信。打印仍按编号排序。
 ORDER = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-         28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 13, 16, 14, 46]
+         28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 13, 16, 14, 46]
 
 
 def main():

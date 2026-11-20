@@ -203,6 +203,9 @@ class Handler(BaseHTTPRequestHandler):
                           no_history=body.get("history") is False)
         elif path == "/api/demote":
             ok, out = run(pl.cmd_demote, as_=body["as"], force=bool(body.get("force")), discard=bool(body.get("discard")))
+        elif path == "/api/inspire/remove":
+            ok, out = run(pl.cmd_inspire, action="remove", files=[body["id"]], note=body.get("note", ""),
+                          tag="", pack="", approved="", show_all=False, show_removed=False)
         elif path == "/api/library/decide":
             try:
                 entry = library.decide(cfg().library, body["id"], body["status"], by="human (review page)",

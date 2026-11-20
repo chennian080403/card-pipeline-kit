@@ -2167,6 +2167,8 @@ def project_state(config):
 
     inspiration = []
     for key, item in load_inspiration(config)["items"].items():
+        if _is_inspiration_removed(item):
+            continue
         inspiration.append({"id": key, **item, "pack": inspiration_pack(item, config.taxonomy),
                             "file": _relative_to_root(config, config.inspiration_dir / item["file"])})
 
@@ -2269,13 +2271,59 @@ def load_inspiration(cfg):
     return {"format": "image-card-pipeline/inspiration-v1", "items": {}}
 
 
+def _is_inspiration_removed(item):
+    return isinstance(item, dict) and bool(item.get("removed"))
+
+
 def _resolve_inspiration(cfg, value):
-    """An inspiration id (or its prefix) -> stored file; anything else is a path/URL."""
+    """An active inspiration id (or unique prefix) -> stored file; removed ids are rejected; anything else is a path/URL."""
+    raw = str(value)
     items = load_inspiration(cfg)["items"]
-    hits = [key for key in items if key.startswith(str(value))]
+    active = {key: item for key, item in items.items() if not _is_inspiration_removed(item)}
+    hits = [key for key in active if key.startswith(raw)]
     if len(hits) == 1:
-        return str(cfg.inspiration_dir / items[hits[0]]["file"])
+        return str(cfg.inspiration_dir / active[hits[0]]["file"])
+    if not raw.startswith(("http://", "https://")) and not Path(os.path.expanduser(raw)).is_file():
+        removed_hits = [key for key, item in items.items() if _is_inspiration_removed(item) and key.startswith(raw)]
+        if removed_hits:
+            ids = ", ".join(sorted(removed_hits))
+            raise SystemExit(
+                f"参考图 {ids} 已移出参考区，不能再按编号引用；原文件仍保留。"
+                f"需要重新启用请先运行 `inspire restore {sorted(removed_hits)[0]}`"
+            )
     return value
+
+
+def _plan_inspire_ids(cfg, args, action):
+    """校验 `inspire remove / restore` 的完整 ID 列表：必须精确匹配完整 ID，整批失败零副作用。"""
+    ids = [str(v).strip() for v in (getattr(args, "files", None) or []) if str(v).strip()]
+    if not ids:
+        raise SystemExit(f"inspire {action} 需要至少一个完整参考图编号（先用 `inspire list{' --removed' if action == 'restore' else ''}` 查看）")
+    items = load_inspiration(cfg)["items"]
+    problems = []
+    for key in ids:
+        if key in items:
+            if action == "restore":
+                stored = cfg.inspiration_dir / items[key]["file"]
+                if not stored.is_file():
+                    problems.append(f"原文件已缺失，无法恢复：{key} ({items[key]['file']})")
+            continue
+        prefix_hits = sorted(k for k in items if k.startswith(key))
+        if prefix_hits:
+            problems.append(f"必须传完整编号，不接受前缀 `{key}`（候选：{', '.join(prefix_hits)}）")
+        else:
+            problems.append(f"参考图编号不存在：{key}")
+    if problems:
+        raise SystemExit(f"inspire {action} 整批未执行（零副作用）：\n  " + "\n  ".join(problems))
+    return ids
+
+
+def plan_inspire_remove(cfg, args):
+    return _plan_inspire_ids(cfg, args, "remove")
+
+
+def plan_inspire_restore(cfg, args):
+    return _plan_inspire_ids(cfg, args, "restore")
 
 
 def plan_inspire_add(cfg, args):
@@ -2315,14 +2363,68 @@ def plan_inspire_add(cfg, args):
 def cmd_inspire(cfg, args):
     index = load_inspiration(cfg)
     if args.action == "list":
-        rows = index["items"].items()
+        show_all = bool(getattr(args, "show_all", False))
+        show_removed = bool(getattr(args, "show_removed", False))
+        rows = list(index["items"].items())
+        if show_removed:
+            rows = [(key, item) for key, item in rows if _is_inspiration_removed(item)]
+        elif not show_all:
+            rows = [(key, item) for key, item in rows if not _is_inspiration_removed(item)]
         if args.tag:
             rows = [(key, item) for key, item in rows if args.tag in (item.get("tags") or [])]
         for key, item in rows:
             tags = f"  [{', '.join(item['tags'])}]" if item.get("tags") else ""
-            print(f"{key}  {item['file']}{tags}  {item.get('note', '')}")
-        if not index["items"]:
-            print("inspiration is empty: `inspire add <file…> --pack <大类>/<子组> --approved \"<用户原话>\"`")
+            status = "  [removed]" if _is_inspiration_removed(item) else ""
+            print(f"{key}  {item['file']}{tags}{status}  {item.get('note', '')}")
+        if not rows:
+            if show_removed:
+                print("(no removed inspiration items)")
+            else:
+                print("inspiration is empty: `inspire add <file…> --pack <大类>/<子组> --approved \"<用户原话>\"`")
+        return
+
+    if args.action == "remove":
+        ids = getattr(args, "inspire_remove_ids", None)
+        if ids is None:
+            ids = plan_inspire_remove(cfg, args)
+        reason = (getattr(args, "note", "") or "").strip()
+        with fileio.locked(_inspiration_index_path(cfg)):
+            fresh = load_inspiration(cfg)
+            changed = 0
+            for key in ids:
+                item = fresh["items"][key]
+                if _is_inspiration_removed(item):
+                    print(f"{key}  already removed ({item['file']})")
+                    continue
+                item["removed"] = True
+                item["removed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                if reason:
+                    item["removed_reason"] = reason
+                print(f"{key}  removed ({item['file']}; file kept on disk, restore with `inspire restore {key}`)")
+                changed += 1
+            if changed:
+                fileio.write_json(_inspiration_index_path(cfg), fresh)
+        return
+
+    if args.action == "restore":
+        ids = getattr(args, "inspire_restore_ids", None)
+        if ids is None:
+            ids = plan_inspire_restore(cfg, args)
+        with fileio.locked(_inspiration_index_path(cfg)):
+            fresh = load_inspiration(cfg)
+            changed = 0
+            for key in ids:
+                item = fresh["items"][key]
+                if not _is_inspiration_removed(item):
+                    print(f"{key}  already active ({item['file']})")
+                    continue
+                item.pop("removed", None)
+                item.pop("removed_at", None)
+                item.pop("removed_reason", None)
+                print(f"{key}  restored ({item['file']})")
+                changed += 1
+            if changed:
+                fileio.write_json(_inspiration_index_path(cfg), fresh)
         return
 
     if not args.files:
@@ -2345,8 +2447,28 @@ def _inspire_add(cfg, args, index, sources):
     added = 0
     for source in sources:
         digest = hashlib.sha256(source.read_bytes()).hexdigest()[:8]
-        if digest in index["items"]:
-            print(f"{digest}  already in inspiration ({index['items'][digest]['file']})")
+        existing = index["items"].get(digest)
+        if existing and not _is_inspiration_removed(existing):
+            print(f"{digest}  already in inspiration ({existing['file']})")
+            continue
+        if existing and _is_inspiration_removed(existing):
+            name = existing["file"]
+            if not (cfg.inspiration_dir / name).is_file():
+                shutil.copy2(source, cfg.inspiration_dir / name)
+            existing.pop("removed", None)
+            existing.pop("removed_at", None)
+            existing.pop("removed_reason", None)
+            existing["pack"] = pack
+            existing["approved"] = (getattr(args, "approved", "") or "").strip()
+            if args.note:
+                existing["note"] = args.note
+            if tags:
+                existing["tags"] = tags
+            existing["at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            if cfg.taxonomy.enabled:
+                existing["schema_version"] = 2
+            print(f"{digest}  restored ({name})")
+            added += 1
             continue
         name = f"{digest}_{source.name}"
         shutil.copy2(source, cfg.inspiration_dir / name)
@@ -3204,13 +3326,15 @@ def build_parser():
     p.set_defaults(func=cmd_feedback)
 
     p = sub.add_parser("inspire", help="short line: keep found material in the inspiration area")
-    p.add_argument("action", choices=["add", "list"])
-    p.add_argument("files", nargs="*")
-    p.add_argument("--note", default="")
+    p.add_argument("action", choices=["add", "list", "remove", "restore"])
+    p.add_argument("files", nargs="*", help="files for add, or full 8-char inspiration ids for remove/restore")
+    p.add_argument("--note", default="", help="note for add, or optional reason for remove")
     p.add_argument("--tag", default="", help="comma-separated tags (add), or one tag to filter (list)")
     p.add_argument("--pack", default="",
                    help="参考区归类，必须写 <大类>/<子组>，如 风格/雪；大类要在 inspiration.categories 白名单里")
-    p.add_argument("--approved", help="用户明确说收录这张图的原话（required；写入索引留痕）")
+    p.add_argument("--approved", help="用户明确说收录这张图的原话（required for add；写入索引留痕）")
+    p.add_argument("--all", dest="show_all", action="store_true", help="include removed items in `inspire list`")
+    p.add_argument("--removed", dest="show_removed", action="store_true", help="only show removed items in `inspire list`")
     p.set_defaults(func=cmd_inspire)
 
     p = sub.add_parser("sketch", help="short line: one idea + references -> candidates, no full card")
@@ -3280,6 +3404,10 @@ def run():
     # 写操作预校验：先整批校验再进入写流程（失败时不建目录 / 不拿锁 / 不存版本）
     if args.command == "inspire" and args.action == "add" and args.files:
         args.inspire_sources = plan_inspire_add(cfg, args)
+    elif args.command == "inspire" and args.action == "remove":
+        args.inspire_remove_ids = plan_inspire_remove(cfg, args)
+    elif args.command == "inspire" and args.action == "restore":
+        args.inspire_restore_ids = plan_inspire_restore(cfg, args)
     elif args.command == "import":
         args.import_plan = plan_import(cfg, args)
     elif args.command == "variant" and args.action == "add":

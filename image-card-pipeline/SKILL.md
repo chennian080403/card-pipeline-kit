@@ -192,7 +192,7 @@ python3 $SKILL/scripts/review_web.py --config ./project.yaml --port 8860
 | `compose <卡> [--var N=V]` | 拼提示词落盘 + 记指纹 + 报字数 |
 | `generate <卡> --approved … [--budget N] [--model 别名]` | 调供应商、写四态 manifest、落候选 |
 | `import <卡> <本地图…> --provider <来源> [--model <模型>] [--prompt …] [--note …]` | 把外部平台生成的图正式导入已存在的卡（复制不删原件、按同卡完整内容哈希去重、独立编号、默认未审）；挂草图卡进**试样区**，挂普通卡进**出图区** |
-| `variant add <卡> <候选> <本地图> --tier 2k\|4k [--provider … --model … --replace]` / `variant list <卡> [候选]` | 给已有候选挂超分等派生版本（存 `output/variants/`，关联原候选稳定 ID），不动原候选名、审核结论、pick 顺序与视频关键帧引用 |
+| `variant add <卡> <候选> <本地图> --tier 2k\|4k [--provider … --model … --replace]` / `variant list <卡> [候选]` | 给已有候选挂超分等派生版本（存 `output/variants/`，关联原候选稳定 ID），不动原候选名、审核结论、pick 顺序与视频关键帧引用；审核页候选 / 素材详情支持切换「原图 / 2K / 4K」（按键 `V` 可在详情和全屏大图间循环对比） |
 | `forget <卡> <序号\|key> [--model 别名] --why …` | 人核对过（run 目录、供应商后台）确认 `unknown` 那张真没出图，清掉它好让下次重发；记录留在 manifest `forgotten` |
 | `sheet <卡>` | 候选 + 参考图条拼成预览 |
 | `keep <卡> <候选> [--note] [--by claude\|human]` | 「要」：通过 + 记进 pick + 登记素材库**草稿**，一步到位（审核页的「要」就是它） |
@@ -206,7 +206,7 @@ python3 $SKILL/scripts/review_web.py --config ./project.yaml --port 8860
 | `unreview <卡> <候选>` | 撤回结论：废稿区的图回试样区 / 出图区，变回未审（审核页废稿区按 2） |
 | `demote --as <种类>:<名> [--force] [--discard]` | 撤掉一次定真源：有历史换回上一版，没有就删掉这条（有卡在用要 `--force`）；原图回素材区，草图回试样区，`--discard` 则进废稿区；记进 `promotions.jsonl`（`action: demote`） |
 | `feedback <卡> accept\|reject\|revise --reason … [--root-cause …]` | 记反馈与归因（同一条连记两次只留一条） |
-| `inspire add <文件…> --pack <大类>/<子组> --approved "<用户原话>" [--note --tag]` / `inspire list` | 参考区（按内容哈希去重，给 8 位 id）。`--pack` 必须显式且至少两级，顶层大类要在参考区白名单里（默认 `人物 / 道具 / 场景 / 风格`，不含 `测试`；项目可用 `inspiration.categories` 改）；缺 `--pack`、缺 `--approved`、或源文件在受管候选 / 评测目录里，整批拒绝且零副作用 |
+| `inspire add <文件…> --pack <大类>/<子组> --approved "<用户原话>" [--note --tag]` / `inspire list [--all\|--removed]` / `inspire remove <完整ID…> [--note …]` / `inspire restore <完整ID…>` | 参考区（按内容哈希去重，给 8 位 id）。`add` 必须显式写两级 `--pack`（顶层大类在参考区白名单里，默认 `人物 / 道具 / 场景 / 风格`，项目可用 `inspiration.categories` 改）与 `--approved`，受管候选 / 评测目录一律整批拒绝且零副作用。`remove` 必须传完整 8 位 ID，软下架（参考区隐藏、停止新试样按编号引用，但保留磁盘原文件不断旧卡），审核页「移出参考区」按钮（或按 `3`）调的就是它；随时可用 `restore` 或重跑 `add` 找回 |
 | `sketch <名> --idea … [--ref id] [--promote 种类:名] [--no-generate] --approved …` | 一句灵感 + 参考直接出候选（生成 `s-<名>` 草图卡）；加 `--no-generate`（或 `--card-only`）只建 / 更新草图卡不调生成，便于随后 `import` 外部平台试样图；`--promote` 写明这张草图是来定哪条真源的（`character:女主` / `"style:黄昏 @氛围"` …），审核页定真源直接停在这一项 |
 | `promote <候选> --as character:\|prop:\|style:\|<自加种类>:\|template:<名> --approved …` | 沉淀成真源 / 风格 / 提示词模板；种类见 `sources.kinds` |
 | `describe --as style:<名> --text "<英文描述>" --approved …` | 只改已登记画风 / 氛围（带描述种类）的描述，样张不动；`--text ""` 清空。每次改都记进 `promotions.jsonl`（谁批、改前、改后，`action: describe`）；审核页真源详情里的「保存描述」就是它 |
