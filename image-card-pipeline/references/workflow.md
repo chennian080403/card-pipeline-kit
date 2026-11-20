@@ -62,11 +62,18 @@ $PL review 05-01 05-01_main_2 fail --note "多了一只耳坠"
 短效系统负责「定下来」，长效系统负责「一直用下去」。
 
 ```bash
-$PL inspire add <找来的图…> --note "<来源/想法>"     # 灵感区，给 8 位 id
+$PL inspire add <人点名收录的图…> --pack 风格/雪 --approved "用户：这张收进参考区" --note "<来源/想法>"   # 参考区，给 8 位 id
 $PL sketch <名> --idea "<灵感一段，英文>" --ref <id> --promote character:<名> --budget 2 --approved "<谁/何时>"   # --promote：来定哪条真源（style 要带 @画风 / @氛围）
 $PL sheet s-<名>                                    # 人挑
 $PL promote <候选> --as character:<名> --approved "<用户原话+日期>"
 ```
+
+- 参考区只收**人明确点名收录的具体图**：`--pack` 必须显式写 `<大类>/<子组>`（至少两级），顶层大类在参考区白名单里（默认 `人物 / 道具 / 场景 / 风格`，项目可用 `inspiration.categories` 改，不含 `测试`）；`--approved` 写用户明确收录的原话，存进索引。缺一项整批拒绝，索引和文件都不动。
+- 拿本地图当本次参考输入（`sketch --ref` / 卡里的 `refs.files`）**不等于**收进参考区。
+- 外部平台生成的试样 / 候选图：先建卡（草图用 `sketch <名> --no-generate --pack …`，镜头用 `new-card`），再跑 `import <卡> <本地图…> --provider <来源> [--model <模型>]` 正式进入试样区 / 出图区（默认未审，同卡按内容哈希去重，不借参考区暂存）。
+- 同一候选的 2K / 4K 超分版：跑 `variant add <卡> <候选> <本地图> --tier 2k|4k` 挂在原候选下面（存 `output/variants/`，共用原候选的审核、pick 顺序与视频关键帧引用）；如果精修改了脸或构图则算新候选，走 `import` 重新审。
+- 纯技术评测（原图 / 2K / 4K 横评、模型评测、模板试跑）放 `output/` 下的独立评测目录配对比页，**不进参考索引、候选清单或素材库**。源文件在受管候选 / 评测目录（或相对路径段含 `评测` / `upscale` / `超分` / `verify`）时，`inspire add` 直接拒绝，带 `--approved` 也不放行。
+- 历史条目没写 `pack` 的照旧按 `风格/<第一个标签>` 读取和分组，不会被新规矩挡下。
 
 - `--as` 四种落点：`character:` / `prop:` / `style:` 写进 `sources.yaml` 对应表；`template:` 写进 `prompt-zone/<路径>.md`（正文取草图卡的 `--idea`，或 `--text`）。
 - 必须 `--approved`：定真源是人的决定，AI 不能替。

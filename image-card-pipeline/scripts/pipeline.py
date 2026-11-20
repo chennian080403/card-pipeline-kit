@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import yaml
@@ -30,6 +31,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fileio
+from core import catalog, naming, taxonomy
 from core import keyframes as keyframemod
 from core import sources as sourcekinds
 import hosts
@@ -64,6 +66,23 @@ class Config:
             self.library["root"] = str((self.root / str(self.library["root"])).resolve())
         self.rules = self.raw.get("rules") or {}
 
+    @property
+    def taxonomy(self):
+        if not hasattr(self, "_taxonomy"):
+            self._taxonomy = taxonomy.load(self.raw, self.path.parent)
+        return self._taxonomy
+
+    @property
+    def vocab(self):
+        return self.taxonomy.vocab
+
+    @property
+    def naming_policy(self):
+        return naming.policy_for(self.vocab, self.raw)
+
+    def v2(self, card=None):
+        return self.taxonomy.enabled or self.naming_policy.get("strict_v2") or (card or {}).get("schema_version") == 2
+
     def dir(self, key, default):
         value = self.paths.get(key, default)
         path = Path(os.path.expanduser(str(value)))
@@ -73,7 +92,7 @@ class Config:
     def kinds(self):
         """True-source kinds (ecosystem contract v1.4): defaults + project.yaml ``sources.kinds``."""
         try:
-            return sourcekinds.kinds(self.raw)
+            return sourcekinds.kinds(self.raw, self.path.parent, self.taxonomy if "taxonomy" in self.raw else None)
         except sourcekinds.KindError as error:
             raise SystemExit(str(error)) from error
 
@@ -276,8 +295,19 @@ def all_cards(cfg):
 # 资产包：大包/小包/子包。只是归类路径，不搬文件。
 DEFAULT_PACK_CATEGORIES = ["人物", "道具", "场景", "风格", "测试"]
 
+# 参考区（inspiration）专用大类白名单：只收用户点名的审美参考，默认不含「测试」。
+# 项目可在 project.yaml 用 inspiration.categories（或 packs.inspiration_categories）扩展/收窄。
+DEFAULT_INSPIRATION_CATEGORIES = ("人物", "道具", "场景", "风格")
+# 受管候选 / 评测目录：那里出来的是过程产物，不能进参考区（先 Path.resolve() 再比对）。
+DEFAULT_INSPIRATION_REJECT_DIRS = ("output/candidates", "output/variants", "output/runs", "output/评测")
+INSPIRATION_REJECT_SEGMENTS = ("评测", "upscale", "超分", "verify")
+INSPIRATION_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+INSPIRATION_VIDEO_EXTS = {".mp4", ".webm", ".mov"}
+
 
 def pack_categories(cfg):
+    if cfg.taxonomy.enabled:
+        return [cfg.taxonomy.label(cid) for cid in cfg.taxonomy.categories()]
     return [str(c) for c in ((cfg.raw.get("packs") or {}).get("categories") or DEFAULT_PACK_CATEGORIES)]
 
 
@@ -285,15 +315,20 @@ def pack_parts(value):
     return [part.strip() for part in str(value or "").replace("\\", "/").split("/") if part.strip()]
 
 
-def card_pack(card, kind_map=None):
+def _display_pack(parts, tax):
+    cid = tax.resolve(parts[0]) if parts and tax and tax.enabled else None
+    return [tax.label(cid), *parts[1:]] if cid else parts
+
+
+def card_pack(card, kind_map=None, tax=None):
     """Card -> pack path. An explicit `pack:` wins; otherwise 人物/<角色>/<分组>, 道具/<道具>/<分组>
     (any image kind of sources.kinds: <label>/<名>/<分组>), 测试/<分组>."""
-    kind_map = kind_map or sourcekinds.DEFAULT_KINDS
+    kind_map = sourcekinds.DEFAULT_KINDS if kind_map is None else kind_map
     explicit = pack_parts(card.get("pack"))
     if explicit:
-        return explicit
+        return _display_pack(explicit, tax)
     group = card.get("group") or ("短效草图" if card.get("kind") == "sketch" else "未分组")
-    for item in card.get("characters") or []:
+    for item in (card.get("characters") or []) if "characters" in kind_map else []:
         name = item.get("name") if isinstance(item, dict) else item
         if name:
             return [kind_map["characters"]["label"], str(name), group]
@@ -304,17 +339,20 @@ def card_pack(card, kind_map=None):
             name = item.get("name") if isinstance(item, dict) else item
             if name:
                 return [kind["label"], *pack_parts(name), group]
+    if tax and tax.enabled:
+        cid = next(iter(tax.categories("deliverable")), next(iter(tax.categories()), None))
+        return [tax.label(cid), group]
     return ["测试", group]
 
 
-def source_pack(section, name, entry, kind_map=None):
+def source_pack(section, name, entry, kind_map=None, tax=None):
     """Registered source -> pack path: 人物/<名>/长相, 道具/<名>/长相, 风格/<名字前缀> (files only in leaves).
 
     Image kinds go to <label>/<名>/长相 (it is already the 真源区, so the leaf says what it is),
     text kinds (styles …) to <label>/<名字前缀>."""
     explicit = pack_parts((entry or {}).get("pack"))
     if explicit:
-        return explicit
+        return _display_pack(explicit, tax)
     kind = (kind_map or sourcekinds.DEFAULT_KINDS).get(section) or {"label": section, "text": False}
     if not kind["text"]:
         return [kind["label"], *pack_parts(name), "长相"]
@@ -336,7 +374,7 @@ def parse_promote(value, kind_map=None):
     text = str(value or "").strip()
     if not text:
         return None
-    kind_map = kind_map or sourcekinds.DEFAULT_KINDS
+    kind_map = sourcekinds.DEFAULT_KINDS if kind_map is None else kind_map
     look = ""
     if "@" in text:
         text, _, look = text.rpartition("@")
@@ -367,15 +405,15 @@ def parse_promote(value, kind_map=None):
     return {"want": want, "as": token, "name": name, "look": look}
 
 
-def promote_defaults(card, kind_map=None, registry=None):
+def promote_defaults(card, kind_map=None, registry=None, tax=None):
     """What the review page pre-fills when a picture of this card is promoted.
 
     The card's own `promote:` wins (and picks the button); the rest is derived:
     长相 from the pack / character; 画风 from the card's first style registered as 画风, 氛围 from its
     first other style (a style with no `look` is an atmosphere reference); either falls back to the
     title segment that is not a character name; 构图 from the last title segment."""
-    kind_map = kind_map or sourcekinds.DEFAULT_KINDS
-    pack = card_pack(card, kind_map)
+    kind_map = sourcekinds.DEFAULT_KINDS if kind_map is None else kind_map
+    pack = card_pack(card, kind_map, tax)
     top = pack[0] if pack else ""
     chars = [c for c in card.get("characters") or [] if isinstance(c, dict) and c.get("name")]
     subject = chars[0]["name"] if chars else ""
@@ -384,10 +422,11 @@ def promote_defaults(card, kind_map=None, registry=None):
     title = str(card.get("title") or card.get("id") or "")
     bare = title[2:] if title.startswith("s-") else title
     image_kind = next((v for k, v in kind_map.items() if not v["text"] and v["label"] == top), None)
-    person = kind_map["characters"]["label"]
+    person_kind = kind_map.get("characters") or {}
+    person = person_kind.get("label")
     # 道具按「角色/道具」两级起名（主角/剑），免得和人物重名；人物有造型时带上造型（主角/婚服）
     who = pack[1] if len(pack) > 1 else subject
-    if image_kind and image_kind is not kind_map["characters"] and len(pack) > 2:
+    if image_kind and image_kind is not person_kind and len(pack) > 2:
         look_name = "/".join(pack[1:3])
     elif top == person and lookup:
         look_name = lookup
@@ -424,12 +463,98 @@ def promote_defaults(card, kind_map=None, registry=None):
     return out
 
 
-def inspiration_pack(item):
+def inspiration_categories(cfg):
+    """参考区专用大类：inspiration.categories > packs.inspiration_categories > 默认白名单。
+    其余区仍用 packs.categories（pack_categories），两边互不顶替。"""
+    if cfg.taxonomy.enabled:
+        return [cfg.taxonomy.label(cid) for cid in cfg.taxonomy.categories("reference")]
+    configured = (cfg.raw.get("inspiration") or {}).get("categories") \
+        or (cfg.raw.get("packs") or {}).get("inspiration_categories")
+    return [str(c) for c in (configured or DEFAULT_INSPIRATION_CATEGORIES)]
+
+
+def inspiration_reject_dirs(cfg):
+    """参考区拒收的受管目录（绝对路径）。项目可用 inspiration.reject_dirs 增删。"""
+    values = (cfg.raw.get("inspiration") or {}).get("reject_dirs") or DEFAULT_INSPIRATION_REJECT_DIRS
+    roots = []
+    for value in values:
+        path = Path(os.path.expanduser(str(value)))
+        roots.append((path if path.is_absolute() else (cfg.root / path)).resolve())
+    return roots
+
+
+def _checked_source_parts(cfg, path):
+    """只查相对项目根的目录层级（或在项目外时最多紧邻两层父目录）+ 文件名，不扫家目录 / 项目根本身以免误伤。"""
+    proj = cfg.root.resolve()
+    if proj in path.parents:
+        rel = path.relative_to(proj)
+        dirs = rel.parts[:-1]
+        return list(dict.fromkeys((*dirs[:2], *dirs[-2:], rel.name)))
+    home = Path.home().resolve()
+    if home in path.parents:
+        rel = path.relative_to(home)
+        dirs = rel.parts[:-1]
+        return list(dict.fromkeys((*dirs[-2:], rel.name)))
+    dirs = path.parts[1:-1]
+    return list(dict.fromkeys((*dirs[-2:], path.name)))
+
+
+def inspiration_source_problem(cfg, source):
+    """源文件能不能收进参考区：落在受管候选 / 评测目录时返回原因，否则返回空串。"""
+    path = Path(source).resolve()
+    for root in inspiration_reject_dirs(cfg):
+        if path == root or root in path.parents:
+            return f"{source} 在受管目录 {root} 里"
+    for part in _checked_source_parts(cfg, path):
+        lowered = part.lower()
+        word = next((w for w in INSPIRATION_REJECT_SEGMENTS if w.lower() in lowered), "")
+        if word:
+            return f"{source} 的路径段 {part!r} 像评测 / 超分目录（含 {word!r}）"
+    return ""
+
+
+def inspiration_pack_problem(cfg, value):
+    """参考区 `--pack` 校验：必须显式、至少两级、顶层大类在白名单里。"""
+    parts = pack_parts(value)
+    allowed = inspiration_categories(cfg)
+    if not parts:
+        return "缺少 --pack：参考区必须写 <大类>/<子组>，允许的大类：" + " / ".join(allowed)
+    if len(parts) < 2:
+        return f"--pack {value!r} 至少两级（如 {parts[0]}/<子组>），只写大类会让人分不清收的是什么"
+    if cfg.taxonomy.enabled:
+        try:
+            cfg.taxonomy.validate_pack(parts, "reference")
+        except taxonomy.TaxonomyError as error:
+            return f"{error}；允许：" + " / ".join(allowed)
+    elif parts[0] not in allowed:
+        return f"--pack 的大类 {parts[0]!r} 不在参考区白名单里；允许：" + " / ".join(allowed)
+    return ""
+
+
+def _media_kind(path):
+    """扩展名 + 魔数双重确认：像图返回 image，像视频返回 video，否则空串。"""
+    ext = path.suffix.lower()
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(64)
+    except OSError:
+        return ""
+    if (head[:8] == b"\x89PNG\r\n\x1a\n" or head[:2] == b"\xff\xd8" or head[:4] == b"GIF8"
+            or head[:2] == b"BM" or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")):
+        return "image" if ext in INSPIRATION_IMAGE_EXTS else ""
+    if head[:4] == b"\x1aE\xdf\xa3":                 # webm / matroska
+        return "video" if ext in INSPIRATION_VIDEO_EXTS else ""
+    if head[4:8] == b"ftyp":                          # mp4 / mov
+        return "video" if ext in INSPIRATION_VIDEO_EXTS else ""
+    return ""
+
+
+def inspiration_pack(item, tax):
     explicit = pack_parts(item.get("pack"))
     if explicit:
-        return explicit
+        return _display_pack(explicit, tax)
     tags = item.get("tags") or []
-    return ["风格", tags[0] if tags else "未分类"]
+    return [tax.label(tax.default_reference_category()), tags[0] if tags else "未分类"]
 
 
 # 流水线自己写的字段：存盘时放到卡的末尾，和人写的内容分开；也不进指纹
@@ -750,6 +875,46 @@ def job_key(card_id, model, index):
     return f"{card_id}|{model}|{index}"
 
 
+def media_reservation(cfg, card, model, jobs, *, forgotten=(), feature="", ext=".png"):
+    directory = cfg.output_dir / "candidates"
+    seq = max(naming.next_seq(jobs, card["id"], model), naming.next_seq(directory.glob("*"), card["id"], model),
+              naming.next_seq(forgotten, card["id"], model))
+    legacy = card.get("schema_version") != 2
+    filename = naming.build_media_name(card["id"], model, seq, feature, ext,
+                                       policy=cfg.naming_policy, legacy_card=legacy)
+    stem = Path(filename).stem
+    return {"card_id": card["id"], "canonical_model": naming.name_key(model), "seq": seq,
+            "naming_version": 2, "media_name": filename,
+            "run_dir": f"runs/{stem}-{uuid.uuid4().hex}"}
+
+
+def job_directory(cfg, key, job):
+    return cfg.output_dir / (job.get("run_dir") or f"runs/{key.replace('|', '-')}")
+
+
+def write_candidate(path, raw):
+    """Publish complete bytes without replacing any existing candidate."""
+    tmp = path.with_name(f".{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(raw)
+        os.link(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def media_model(cfg, filename, key, job):
+    model = job.get("canonical_model") or job.get("model_alias")
+    if model:
+        return model
+    if job.get("origin") == "import" and job.get("display_model"):
+        return job["display_model"]
+    try:
+        return naming.parse_media_name(filename, policy=cfg.naming_policy)["model_code"]
+    except naming.NamingError:
+        parts = key.split("|")
+        return parts[1] if len(parts) == 3 else job.get("display_model") or ""
+
+
 def kind_texts(cfg, card):
     """{key: description} of the card's text kinds (styles, and any declared ``text: true`` kind).
 
@@ -805,8 +970,8 @@ def _apply_vars(text, pairs):
 # ---- 版本：项目文件夹用 git 存版本，不再生成 .bak 文件 -------------------------
 # 写命令（命令行和审核页都一样）动手前先存一次（收住人或 AI 的手改），做完再存一次。
 # 项目不是 git 仓库、或 rules.autosave: false 时直接跳过。找回用 `版本 历史 / 取 / 回退`。
-WRITE_COMMANDS = {"init", "new-card", "compose", "generate", "forget", "review", "pick", "keep", "pack",
-                  "unregister", "unreview", "note", "demote", "register", "feedback", "inspire", "sketch", "promote"}
+WRITE_COMMANDS = {"init", "new-card", "compose", "generate", "import", "variant", "forget", "review", "pick", "keep",
+                  "pack", "unregister", "unreview", "note", "demote", "register", "feedback", "inspire", "sketch", "promote"}
 _VERSION_LOCK = threading.Lock()
 PROJECT_GITIGNORE = """# image-card-pipeline 项目：这些是派生物或重复件，不进版本
 output/runs/*/result.*
@@ -908,7 +1073,10 @@ def cmd_init(cfg, args):
         copy(example, cfg.prompt_zone / rel)
     if not cfg.path.exists():
         body = (SKILL_ROOT / "project.example.yaml").read_text(encoding="utf-8")
-        cfg.path.write_text(body, encoding="utf-8")
+        vocab_path = cfg.path.parent / "vocab.yaml"
+        if not vocab_path.exists():
+            copy(taxonomy.DEFAULT_VOCAB_PATH, vocab_path)
+        cfg.path.write_text("taxonomy: vocab.yaml\n\n" + body, encoding="utf-8")
         wrote.append(str(cfg.path))
 
     ignore = cfg.path.parent / ".gitignore"
@@ -938,12 +1106,16 @@ def cmd_new_card(cfg, args):
     template = (CARD_TEMPLATE if kind == "card" else CARD_TEMPLATE.with_name(f"card.{kind}.yaml")).read_text(encoding="utf-8")
     stamp = time.strftime("%Y%m%d")
     slug = re.sub(r"[^a-z0-9]+", "-", (args.title or "").lower()).strip("-") or "card"
-    path = depth / f"{args.card_id}_{slug}.yaml"
-    if path.exists():
-        raise SystemExit(f"{path} already exists")
-    body = template.replace("__ID__", str(args.card_id)).replace("__TITLE__", args.title or "")
-    body = body.replace("__SLUG__", slug).replace("__DATE__", stamp)
-    path.write_text(body, encoding="utf-8")
+    card_id = naming.normalize_name(args.card_id) if cfg.v2() else args.card_id
+    path = depth / (f"{card_id}.yaml" if cfg.v2() else f"{card_id}_{slug}.yaml")
+    with fileio.locked(depth / "cards"):
+        if path.exists():
+            raise SystemExit(f"{path} already exists")
+        if cfg.v2():
+            validate_new_id(cfg, card_id, path)
+        body = template.replace("__ID__", yaml_scalar(card_id)).replace("__TITLE__", yaml_scalar(args.title or ""))
+        body = body.replace("__SLUG__", slug).replace("__DATE__", stamp)
+        fileio.atomic_write(path, ("schema_version: 2\n" if cfg.v2() else "") + body)
     print(f"created {path}")
     print("next: fill it in, then `validate`")
 
@@ -959,9 +1131,46 @@ def cmd_show(cfg, args):
     print(yaml.safe_dump({k: v for k, v in card.items() if not k.startswith("_")}, allow_unicode=True, sort_keys=False))
 
 
+def yaml_scalar(value):
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def validate_new_id(cfg, card_id, path):
+    naming.validate_card_id(card_id, cfg.naming_policy, stem=path.stem)
+    naming.check_card_unique(cfg.cards_dir.glob("*.yaml"), card_id)
+    if any(naming.name_key(card.get("id")) == naming.name_key(card_id) for card in all_cards(cfg)):
+        raise naming.NamingError(f"card ID already exists: {card_id!r}")
+
+
+def validate_pack(cfg, value):
+    parts = pack_parts(value)
+    if not parts:
+        return
+    if cfg.taxonomy.enabled:
+        cfg.taxonomy.validate_pack(parts)
+    elif parts[0] not in pack_categories(cfg):
+        raise taxonomy.TaxonomyError(f"unknown pack category: {parts[0]!r}")
+
+
+def v2_card_problems(cfg, card):
+    if card.get("schema_version") != 2:
+        return []
+    try:
+        path = card["_path"]
+        naming.validate_card_id(card.get("id"), cfg.naming_policy, stem=path.stem)
+        naming.check_card_unique(cfg.cards_dir.glob("*.yaml"), card["id"], exclude=path)
+        if any(other["_path"] != path and naming.name_key(other.get("id")) == naming.name_key(card["id"])
+               for other in all_cards(cfg)):
+            raise naming.NamingError(f"duplicate card ID: {card['id']!r}")
+        validate_pack(cfg, card.get("pack"))
+    except (naming.NamingError, taxonomy.TaxonomyError) as error:
+        return [str(error)]
+    return []
+
+
 def card_problems(cfg, card):
     """(problems, notes) for a card. Problems block compose; notes are informational."""
-    problems, notes = [], []
+    problems, notes = v2_card_problems(cfg, card), []
 
     if card.get("hold"):
         problems.append(f"card is on hold: {card['hold']}")
@@ -1075,6 +1284,7 @@ def cmd_generate(cfg, args):
     if not alias:
         raise SystemExit("no model: pass --model or set models.default in the config")
     spec = cfg.model_spec(alias)
+    model = naming.resolve_model(alias, cfg.vocab, "image") if cfg.v2(card) else None
 
     budget = int(args.budget or (card.get("candidates") or {}).get("default") or 1)
     require_approval = cfg.rules.get("require_approval", True)
@@ -1127,29 +1337,40 @@ def cmd_generate(cfg, args):
         job = manifest["jobs"].get(key) or {}
         state = job.get("status")
         if state == "running" and job.get("pid") != os.getpid() and _pid_alive(job.get("pid")):
-            return "busy"
+            return "busy", job
         if state == "running":
             # 认领它的进程已经没了：请求可能已经发出去、扣了费，只是没活到记结果。记 unknown，不重发
             manifest["jobs"][key] = {**job, "status": "unknown", "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                                      "error": f"left 'running' by process {job.get('pid')}, which is gone -- "
                                               "the request may have gone out"}
-            return "orphaned"
+            return "orphaned", job
         if state in ("ok", "unknown"):
-            return state
-        manifest["jobs"][key] = {"status": "running", "pid": os.getpid(), "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
-        return state or "new"
+            return state, job
+        if model:
+            record = media_reservation(cfg, card, model, manifest["jobs"], forgotten=manifest.get("forgotten", ()),
+                                       ext=".webp")
+        else:
+            legacy = f"runs/{key.replace('|', '-')}"
+            occupied = any(other != key and (saved.get("run_dir") or f"runs/{other.replace('|', '-')}") == legacy
+                           for other, saved in manifest["jobs"].items())
+            record = {"run_dir": f"{legacy}-{uuid.uuid4().hex}" if occupied else legacy}
+        record.update(status="running", pid=os.getpid(), started=time.strftime("%Y-%m-%dT%H:%M:%S"))
+        record.update(card_id=card["id"], model_alias=alias, provider=spec["name"])
+        manifest["jobs"][key] = record
+        return state or "new", record
 
     produced, skipped, stale_done, busy, unknown = [], [], [], [], []
     for index in range(1, max(1, budget) + 1):
         key = job_key(card["id"], alias, index)
-        state = update_manifest(cfg, lambda manifest: claim(manifest, key))
+        state, record = update_manifest(cfg, lambda manifest: claim(manifest, key))
+        run_dir = job_directory(cfg, key, record)
         if state == "busy":
             busy.append(key)             # 另一个进程正在出这一张，不重复花钱
             print(f"{key}: being generated by another process -- skipped")
             continue
         if state == "ok":
             skipped.append(key)          # budget is a total, so a re-run never doubles the spend
-            old_req = cfg.output_dir / "runs" / f"{card['id']}-{alias}-{index}" / "request.json"
+            old_req = run_dir / "request.json"
             try:
                 if json.loads(old_req.read_text(encoding="utf-8")).get("prompt") != text:
                     stale_done.append(key)
@@ -1157,15 +1378,14 @@ def cmd_generate(cfg, args):
                 pass
             continue
         if state in ("unknown", "orphaned"):
-            run_hint = cfg.output_dir / "runs" / f"{card['id']}-{alias}-{index}"
+            run_hint = run_dir
             why = "was left 'running' by a process that is gone" if state == "orphaned" else "state 'unknown'"
             print(f"{key}: {why} -- a paid run may already exist. Inspect {run_hint} (response.json / error.txt) "
                   f"and the provider's console; this command will not re-send it. "
                   f"Only after checking: `forget {card['id']} {index} --model {alias} --why \"…\"`")
             unknown.append(key)
             continue
-        run_dir = cfg.output_dir / "runs" / f"{card['id']}-{alias}-{index}"
-        run_dir.mkdir(parents=True, exist_ok=True)
+        run_dir.mkdir(parents=True, exist_ok=not model)
         for stale in ("response.json", "error.txt"):     # 上一次失败（failed）留下的，别和这次的混在一起
             (run_dir / stale).unlink(missing_ok=True)
         request_record = {
@@ -1185,7 +1405,7 @@ def cmd_generate(cfg, args):
         except Exception as error:  # noqa: BLE001 - record the failure state, never guess
             # 只有「确定没跑」（没连上、本地就错了、4xx 拒收）才是 failed，下次会重发；其余一律 unknown，不重发
             state = "failed" if isinstance(error, providers.NotRun) else "unknown"
-            set_job(cfg, key, {"status": state, "error": f"{type(error).__name__}: {error}",
+            set_job(cfg, key, {**record, "status": state, "error": f"{type(error).__name__}: {error}",
                                "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
             (run_dir / "error.txt").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
             print(f"{key}: {state} -- {error}")
@@ -1200,12 +1420,16 @@ def cmd_generate(cfg, args):
         (run_dir / f"result.{ext}").write_bytes(raw)
         candidates = cfg.output_dir / "candidates"
         candidates.mkdir(parents=True, exist_ok=True)
-        candidate = candidates / f"{card['id']}_{alias}_{index}.{ext}"
-        fileio.atomic_write(candidate, raw)      # 审核页随时在读候选图，不能看到半张
+        candidate = candidates / (f"{Path(record['media_name']).stem}.{ext}" if model else f"{card['id']}_{alias}_{index}.{ext}")
+        if model:
+            record["media_name"] = candidate.name
+            write_candidate(candidate, raw)
+        else:
+            fileio.atomic_write(candidate, raw)
         (run_dir / "run.json").write_text(json.dumps(
             {"message": message, "seconds": round(time.time() - started, 2), "width": width, "height": height,
              "has_alpha": has_alpha}, ensure_ascii=False, indent=2), encoding="utf-8")
-        set_job(cfg, key, {"status": "ok", "candidate": str(candidate.relative_to(cfg.output_dir)),
+        set_job(cfg, key, {**record, "status": "ok", "candidate": str(candidate.relative_to(cfg.output_dir)),
                            "message": message, "seconds": round(time.time() - started, 2),
                            "width": width, "height": height, "has_alpha": has_alpha,
                            "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
@@ -1254,8 +1478,8 @@ def cmd_forget(cfg, args):
         del manifest["jobs"][key]
         return job
 
-    update_manifest(cfg, drop)
-    run_dir = cfg.output_dir / "runs" / key.replace("|", "-")
+    job = update_manifest(cfg, drop)
+    run_dir = job_directory(cfg, key, job)
     if run_dir.is_dir():
         kept = cfg.output_dir / "runs" / "_forgotten" / f"{run_dir.name}-{time.strftime('%Y%m%d-%H%M%S')}"
         kept.parent.mkdir(parents=True, exist_ok=True)
@@ -1353,9 +1577,13 @@ def _shrink_ref(cfg, ref, limit):
 
 def cmd_sheet(cfg, args):
     card = load_card(cfg, args.card)
-    candidates = sorted((cfg.output_dir / "candidates").glob(f"{card['id']}_*"))
+    manifest = load_manifest(cfg)
+    raw_cards = all_cards(cfg)
+    card_id = str(card["id"])
+    candidates = [p for p in sorted((cfg.output_dir / "candidates").glob(f"{card_id}_*"))
+                  if _candidate_card_id(cfg, p.name, manifest, raw_cards) == card_id]
     if not candidates:
-        raise SystemExit(f"no candidates for {card['id']}; run generate first")
+        raise SystemExit(f"no candidates for {card['id']}; run generate or import first")
     refs, _missing = resolve_refs(cfg, card)
     try:
         from PIL import Image, ImageDraw
@@ -1417,17 +1645,46 @@ def update_review(cfg, card_id, change):
     return review
 
 
-def candidate_name(cfg, name):
+def _candidate_card_id(cfg, name, manifest=None, cards=None):
+    """精确判断一个候选文件名归属哪张卡：manifest 优先（真源），无记录时按最长卡 id 前缀匹配。"""
+    fname = Path(str(name)).name
+    manifest = manifest if manifest is not None else load_manifest(cfg)
+    for key, job in (manifest.get("jobs") or {}).items():
+        if job.get("candidate") and Path(job["candidate"]).name == fname:
+            return str(job.get("card_id") or key.split("|")[0])
+    try:
+        return naming.parse_media_name(fname, policy=cfg.naming_policy)["card_id"]
+    except naming.NamingError:
+        pass
+    cards = cards if cards is not None else all_cards(cfg)
+    for cid in sorted((str(c.get("id")) for c in cards if c.get("id") is not None), key=len, reverse=True):
+        if fname.startswith(f"{cid}_"):
+            return cid
+    return ""
+
+
+def candidate_name(cfg, name, card_id=None):
     """The candidate's real file name, so `01-01_sun_1` and `01-01_sun_1.png` land on the same review key
-    (the review page looks results up by file name)."""
+    (the review page looks results up by file name). When ``card_id`` is given, verify ownership."""
     name = Path(str(name)).name
     directory = cfg.output_dir / "candidates"
+    found = ""
     if (directory / name).is_file():
-        return name
-    matches = sorted(p.name for p in directory.glob(f"{name}.*") if p.is_file())
-    if len(matches) == 1:
-        return matches[0]
-    raise SystemExit(f"candidate not found: {name}" + (f" (ambiguous: {', '.join(matches)})" if matches else ""))
+        found = name
+    else:
+        matches = sorted(p.name for p in directory.glob("*") if p.is_file() and p.stem == name)
+        if len(matches) == 1:
+            found = matches[0]
+        if not found:
+            raise SystemExit(f"candidate not found: {name}" + (f" (ambiguous: {', '.join(matches)})" if matches else ""))
+    if card_id is not None:
+        cid = str(card_id)
+        owner = _candidate_card_id(cfg, found)
+        if owner and owner != cid:
+            raise SystemExit(f"candidate {found} belongs to card {owner}, not {cid}")
+        if not owner:
+            raise SystemExit(f"candidate {found} does not belong to card {cid}")
+    return found
 
 
 DEFAULT_REVIEWERS = ["claude", "human"]   # 看图结论只认视觉主力和人（分工表，SKILL.md）
@@ -1440,7 +1697,7 @@ def cmd_review(cfg, args):
         raise SystemExit(f"review --by {by}: 看图结论只能由 {' / '.join(allowed)} 给（rules.reviewers）。"
                          "文字类杂活可以交给别的模型，看图判断不行。")
     card = load_card(cfg, args.card)
-    args.candidate = candidate_name(cfg, args.candidate)
+    args.candidate = candidate_name(cfg, args.candidate, card_id=card["id"])
     fields = {"verdict": args.verdict, "by": by, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
     if (args.note or "").strip():   # 不写备注就不动原来的备注；清空备注只走 `note`（留旧版）
         fields["note"] = args.note.strip()
@@ -1451,7 +1708,7 @@ def cmd_review(cfg, args):
 def cmd_pick(cfg, args):
     card = load_card(cfg, args.card)
     # 挑出和结论（通过/待定/不通过）互相独立；--remove 取消挑出
-    names = [candidate_name(cfg, name) for name in args.candidates]
+    names = [candidate_name(cfg, name, card_id=card["id"]) for name in args.candidates]
     stems = {Path(name).stem for name in names}
     args.candidates = names
 
@@ -1493,21 +1750,21 @@ def cmd_register(cfg, args):
     files = []
     manifest = load_manifest(cfg)
     sent_prompts = {}                      # candidate file name -> the prompt actually sent for it
+    jobs = {}
     for key, job in manifest["jobs"].items():
         if job.get("candidate"):
-            request = cfg.output_dir / "runs" / key.replace("|", "-") / "request.json"
+            cname = Path(job["candidate"]).name
+            jobs[cname] = key, job
+            request = job_directory(cfg, key, job) / "request.json"
             try:
-                sent_prompts[Path(job["candidate"]).name] = json.loads(request.read_text(encoding="utf-8")).get("prompt", "")
+                sent_prompts[cname] = json.loads(request.read_text(encoding="utf-8")).get("prompt", "")
             except (OSError, ValueError):
-                pass
+                if job.get("prompt"):
+                    sent_prompts[cname] = job["prompt"]
     for name in picks:
-        candidate = candidates_dir / name
-        if not candidate.is_file():
-            matches = sorted(candidates_dir.glob(f"{name}*"))
-            if not matches:
-                raise SystemExit(f"candidate not found: {name}")
-            candidate = matches[0]
-        if root and str(candidate).startswith(str(root)):
+        resolved = candidate_name(cfg, name, card_id=card["id"])
+        candidate = candidates_dir / resolved
+        if root and candidate.is_relative_to(root):
             files.append(str(candidate.relative_to(root)))
         else:
             files.append(str(candidate))
@@ -1516,11 +1773,21 @@ def cmd_register(cfg, args):
     fallback = prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else ""
     # one ingest per image so each entry keeps the prompt that actually produced it (not the card's current one)
     reply = {"ok": True, "added": [], "already": []}
+    tax = cfg.taxonomy
+    pack = card_pack(card, cfg.kinds, tax)
+    cid = tax.resolve(pack[0])
     for item in files:
+        cname = Path(item).name
+        key, job = jobs.get(cname, ("", {}))
+        v2 = cfg.v2(card) or job.get("naming_version") == 2
         part = library.ingest(
             cfg.library, title=f"{card['id']} {card.get('title', '')}", files=[item],
-            prompt=sent_prompts.get(Path(item).name) or fallback,
-            model=card.get("model") or cfg.default_model(), batch=card.get("group") or card["id"],
+            prompt=sent_prompts.get(cname) or fallback,
+            model=media_model(cfg, cname, key, job) or None, batch=card.get("group") or card["id"],
+            card_id=card["id"], candidate_name=cname, job_key=key or None, category_id=cid,
+            storage_category=tax.storage(cid) if v2 else None,
+            pack_name=pack[1] if len(pack) > 1 else card["id"],
+            naming_version=job.get("naming_version"),
         )
         for field in ("added", "already"):
             reply[field] += part.get(field) or []
@@ -1536,9 +1803,10 @@ def cmd_unregister(cfg, args):
     if cfg.library.get("kind") != "local":
         raise SystemExit("unregister works on a local library only")
     card = load_card(cfg, args.card)
-    name = Path(args.candidate).stem   # `01-01_sun_1` and `01-01_sun_1.png` both work, like review/pick
+    name = candidate_name(cfg, args.candidate, card["id"])
     entries = [e for e in library.local_load(cfg.library)["entries"]
-               if Path(e["file"]).stem == name and str(e.get("title", "")).split(" ", 1)[0] == card["id"]]
+               if (e.get("candidate_name") or Path(e["file"]).name) == name
+               and (e.get("card_id") or str(e.get("title", "")).split(" ", 1)[0]) == card["id"]]
     if not entries:
         raise SystemExit(f"{name} is not in the library")
     final = [e["id"] for e in entries if e.get("status") == "final"]
@@ -1605,7 +1873,7 @@ def cmd_note(cfg, args):
     """Write (or clear) a candidate's note; the verdict stays as it is. The review page autosaves into it.
     The note it replaces goes into note_history (last 10), so a slip can be undone."""
     card = load_card(cfg, args.card)
-    name = candidate_name(cfg, args.candidate)
+    name = candidate_name(cfg, args.candidate, card_id=card["id"])
     text = (args.note or "").strip()
     update_review(cfg, card["id"], lambda review: _set_note_kept(review["candidates"].setdefault(name, {}), {"note": text},
                                                                  keep=not getattr(args, "no_history", False)))
@@ -1615,7 +1883,7 @@ def cmd_note(cfg, args):
 def cmd_unreview(cfg, args):
     """Take a verdict back: a rejected image leaves the rejects and is 未审 again in the trial / review zone."""
     card = load_card(cfg, args.card)
-    name = candidate_name(cfg, args.candidate)
+    name = candidate_name(cfg, args.candidate, card_id=card["id"])
     if not _clear_verdict(cfg, card["id"], name):
         raise SystemExit(f"{name} has no verdict to take back")
     print(f"{name}: verdict cleared -> back in the {'trial' if card.get('kind') == 'sketch' else 'review'} zone (未审)")
@@ -1675,7 +1943,8 @@ def cmd_demote(cfg, args):
     if not card_id:
         return
     finalised = cfg.library.get("kind") == "local" and any(
-        Path(e["file"]).stem == Path(origin).stem and e.get("status") == "final"
+        Path(e.get("candidate_name") or e["file"]).stem == Path(origin).stem and e.get("status") == "final"
+        and (not e.get("card_id") or e["card_id"] == card_id)
         for e in library.local_load(cfg.library)["entries"])
     if finalised:   # 原图在素材库里已经定稿：不动它（定稿只归人）
         print(f"note: {origin} is finalised in the library -- it stays there; un-finalise it on the review page to move it")
@@ -1725,15 +1994,27 @@ def video_keyframe_uses(config, entries):
     root, cards_dir = found
     if not cards_dir.is_dir():
         return {}
-    stem = lambda name: Path(str(name)).stem
-    by_stem = {}
+    by_candidate = {}
     for entry in entries:
-        by_stem.setdefault((entry["card"], stem(entry["candidate"])), []).append(entry)
+        by_candidate.setdefault((entry["card"], entry["candidate"]), []).append(entry)
     by_sha = {}
     for entry in entries:
         if entry.get("sha256"):
             by_sha.setdefault(entry["sha256"], []).append(entry)
     picks, digests, uses = {}, {}, {}
+    directory = config.output_dir / "candidates"
+    files = sorted(p for p in directory.glob("*") if p.is_file() and p.suffix.lower() in INSPIRATION_IMAGE_EXTS)
+    manifest, image_cards = load_manifest(config), all_cards(config)
+
+    def by_image(card_id, name):
+        if not name:
+            return []
+        exact = directory / name
+        stems = [p for p in files if p.stem == name]
+        matches = [exact] if exact in files else stems or [p for p in files if p.name.startswith(name)]
+        if len(matches) == 1 and _candidate_card_id(config, matches[0].name, manifest, image_cards) == card_id:
+            return by_candidate.get((card_id, matches[0].name), [])
+        return []
 
     def first_pick(card_id):
         if card_id not in picks:
@@ -1756,10 +2037,7 @@ def video_keyframe_uses(config, entries):
                 hits = [e for e in entries if e["id"] == value[len("library:"):]]
             elif value.startswith("image:"):
                 image_card, _, cand = value[len("image:"):].partition("/")
-                if cand:              # 写了候选名：和视频一样按前缀认
-                    hits = [e for (c, s), es in by_stem.items() if c == image_card and s.startswith(stem(cand)) for e in es]
-                elif first_pick(image_card):
-                    hits = by_stem.get((image_card, stem(first_pick(image_card))), [])
+                hits = by_image(image_card, cand or first_pick(image_card))
             elif not value.startswith(("source:", "take:", "http://", "https://", "data:")):
                 file = Path(os.path.expanduser(value))
                 file = file if file.is_absolute() else (root / file).resolve()
@@ -1779,9 +2057,10 @@ def project_state(config):
     manifest = load_manifest(config)
     by_candidate = {Path(job["candidate"]).name: {"key": key, **job}
                     for key, job in manifest["jobs"].items() if job.get("candidate")}
-    registered = set()                    # candidate file names already in the local library
+    registered = set()
     if config.library.get("kind") == "local" and config.library.get("root"):
-        registered = {Path(e["file"]).name for e in library.local_load(config.library)["entries"]}
+        registered = {(e.get("card_id") or "", e.get("candidate_name") or Path(e["file"]).name)
+                      for e in library.local_load(config.library)["entries"]}
     cards = []
     registry = load_sources(config)    # 定真源默认值要看 styles 登记的是画风还是氛围；下面真源区也用它
     raw_cards = all_cards(config)      # 读一次，下面真源的「被哪些卡引用」也用它
@@ -1790,35 +2069,55 @@ def project_state(config):
         review_path = _review_path(config, card_id)
         review = json.loads(review_path.read_text(encoding="utf-8")) if review_path.is_file() else {}
         candidates = []
+        variants_by_cand = manifest.get("variants") or {}
         for path in sorted((config.output_dir / "candidates").glob(f"{card_id}_*")):
             job = by_candidate.get(path.name, {})
-            if job and job["key"].split("|")[0] != card_id:
+            if _candidate_card_id(config, path.name, manifest, raw_cards) != card_id:
                 continue                      # prefix collision: belongs to another card
             reviews = review.get("candidates") or {}
             verdict = reviews.get(path.name) or reviews.get(path.stem) or {}   # older CLI runs keyed it without extension
             sent = ""                         # the prompt actually sent for this image (runs/<card>-<alias>-<n>/request.json)
             if job:
-                request = config.output_dir / "runs" / job["key"].replace("|", "-") / "request.json"
+                request = job_directory(config, job["key"], job) / "request.json"
                 try:
                     sent = json.loads(request.read_text(encoding="utf-8")).get("prompt", "")
                 except (OSError, ValueError):
-                    pass
+                    sent = job.get("prompt", "")
+            variants = []
+            for entry in variants_by_cand.get(path.name) or []:
+                vpath = config.output_dir / entry.get("file", "")
+                variants.append({
+                    "tier": entry.get("tier", ""),
+                    "file": _relative_to_root(config, vpath) if entry.get("file") else "",
+                    "width": entry.get("width"),
+                    "height": entry.get("height"),
+                    "alpha": bool(entry.get("has_alpha")),
+                    "provider": entry.get("provider", ""),
+                    "model": entry.get("model", ""),
+                    "note": entry.get("note", ""),
+                    "at": entry.get("at", ""),
+                    "exists": bool(entry.get("file")) and vpath.is_file(),
+                })
             candidates.append({"sent_prompt": sent,
-                "name": path.name, "file": _relative_to_root(config, path), "model": job.get("key", "||").split("|")[1],
+                "name": path.name, "file": _relative_to_root(config, path),
+                "model": media_model(config, path.name, job.get("key", ""), job),
+                "origin": job.get("origin", "generate"), "provider": job.get("provider", ""),
                 "width": job.get("width"), "height": job.get("height"), "at": job.get("at", ""), "alpha": bool(job.get("has_alpha")),
                 "verdict": verdict.get("verdict", ""), "note": verdict.get("note", ""),
                 "note_history": verdict.get("note_history") or [],
-                "picked": bool({path.name, path.stem} & set(review.get("pick") or [])), "registered": path.name in registered,
+                "picked": bool({path.name, path.stem} & set(review.get("pick") or [])),
+                "registered": (card_id, path.name) in registered or ("", path.name) in registered,
+                "variants": variants,
             })
         prompt_file = config.output_dir / "prompt" / f"{card_id}.txt"
         cards.append({
             "id": card_id, "title": card.get("title", ""), "kind": card.get("kind", "card"),
             "group": card.get("group") or ("短效草图" if card.get("kind") == "sketch" else "未分组"),
-            "pack": card_pack(card, config.kinds),
+            "pack": card_pack(card, config.kinds, config.taxonomy),
             "subject": next((c.get("name") for c in (card.get("characters") or []) if isinstance(c, dict) and c.get("name")), ""),
             "lookup": next((c.get("lookup") for c in (card.get("characters") or []) if isinstance(c, dict) and c.get("lookup")), ""),
             "outfit": card.get("outfit", ""),
-            "promote": promote_defaults(card, config.kinds, registry),
+            "promote": promote_defaults(card, config.kinds, registry, config.taxonomy),
             "status": card.get("status", "draft"), "hold": card.get("hold", ""),
             "idea": card.get("extra_prompt") or card.get("action") or "",
             "prompt": prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else "",
@@ -1839,7 +2138,8 @@ def project_state(config):
                 history.append({**item, "source": str(item.get("source", ""))})
             source = entry.get("source")
             sources.append({
-                "section": section, "label": label, "name": name, "pack": source_pack(section, name, entry, kind_map), "text": kind["text"],
+                "section": section, "label": label, "name": name,
+                "pack": source_pack(section, name, entry, kind_map, config.taxonomy), "text": kind["text"],
                 "source": str(source) if source else "", "face": str(entry.get("face", "") or ""),
                 "exists": bool(source) and (str(source).startswith(("http://", "https://")) or (config.root / str(source)).is_file()),
                 "approved": entry.get("approved", ""), "at": str(entry.get("at", "")),
@@ -1855,17 +2155,19 @@ def project_state(config):
         lib["root"] = _relative_to_root(config, root)
         packs = {c["id"]: c["pack"] for c in cards}
         for entry in library.local_load(config.library)["entries"]:
-            owner = str(entry.get("title", "")).split(" ", 1)[0]
+            owner = entry.get("card_id") or str(entry.get("title", "")).split(" ", 1)[0]
+            cid = config.taxonomy.resolve(entry.get("category_id") or entry.get("storage_category"))
             lib["entries"].append({**entry, "file": _relative_to_root(config, root / entry["file"]),
-                                   "card": owner, "candidate": Path(entry["file"]).name,
-                                   "pack": packs.get(owner) or ["测试", str(entry.get("batch") or "未分组")]})
+                                   "card": owner, "candidate": entry.get("candidate_name") or Path(entry["file"]).name,
+                                   "pack": packs.get(owner) or [config.taxonomy.label(cid) if cid or config.taxonomy.enabled else "测试",
+                                                                str(entry.get("pack_name") or entry.get("batch") or "未分组")]})
         uses = video_keyframe_uses(config, lib["entries"])
         for entry in lib["entries"]:
             entry["keyframe_of"] = uses.get(entry["id"], [])
 
     inspiration = []
     for key, item in load_inspiration(config)["items"].items():
-        inspiration.append({"id": key, **item, "pack": inspiration_pack(item),
+        inspiration.append({"id": key, **item, "pack": inspiration_pack(item, config.taxonomy),
                             "file": _relative_to_root(config, config.inspiration_dir / item["file"])})
 
     promotions = []
@@ -1884,6 +2186,8 @@ def project_state(config):
 
     return {"project": config.name, "root": str(config.root), "today": time.strftime("%Y-%m-%d"),
             "categories": pack_categories(config),
+            "inspiration_categories": inspiration_categories(config),
+            "taxonomy": config.taxonomy.categories(),
             "kinds": [{"section": k, "label": v["label"], "as": v.get("as") or k, "text": v["text"]} for k, v in config.kinds.items()],
             "cards": cards, "sources": sources, "templates": [{"id": t["id"], "name": t["name"], "body": t.get("body", "")} for t in templates],
             "library": lib, "inspiration": inspiration, "promotions": promotions[-50:][::-1]}
@@ -1900,7 +2204,11 @@ def cmd_keep(cfg, args):
 
 def cmd_pack(cfg, args):
     """改卡的资产包路径（只归类，不搬文件）；路径给空就回到默认规则。"""
-    card = update_card(cfg, args.card, lambda fresh: fresh.__setitem__("pack", "/".join(pack_parts(args.pack))))
+    def change(fresh):
+        if fresh.get("schema_version") == 2:
+            validate_pack(cfg, args.pack)
+        fresh["pack"] = "/".join(pack_parts(args.pack))
+    card = update_card(cfg, args.card, change)
     print(f"{args.card} -> {card['pack'] or '（按默认规则归类）'}")
 
 
@@ -1970,9 +2278,41 @@ def _resolve_inspiration(cfg, value):
     return value
 
 
-def cmd_inspire(cfg, args):
-    import shutil
+def plan_inspire_add(cfg, args):
+    """先整批校验，再动任何文件：一条不合格就整批拒绝（不建目录 / 不拿锁 / 不复制 / 不写索引 / 不存版本）。
+    返回解析后的源文件列表；命令行和直接调用 cmd_inspire 的都走这里。"""
+    problems = []
+    pack_problem = inspiration_pack_problem(cfg, getattr(args, "pack", ""))
+    if pack_problem:
+        problems.append(pack_problem)
+    approval = approval_problem(getattr(args, "approved", ""))
+    if approval:
+        problems.append('参考区只收用户明确点名收录的图，要原话：--approved "用户：这张收进参考区" '
+                        f"({approval})")
+    sources = []
+    for value in args.files:
+        source = Path(os.path.expanduser(value)).resolve()
+        if not source.is_file():
+            problems.append(f"not a file: {value}")
+            continue
+        if source.stat().st_size == 0:
+            problems.append(f"empty file: {value}")
+            continue
+        if not _media_kind(source):
+            problems.append(f"not a real image or video (extension / magic bytes): {value}")
+            continue
+        reject = inspiration_source_problem(cfg, source)
+        if reject:
+            problems.append(f"参考区拒收：{reject}。评测 / 超分对比图请放 output/ 下独立评测目录并配对比页；"
+                            "外部平台出的候选图等走正式导入（import）后再审核，不要塞进参考区。")
+            continue
+        sources.append(source)
+    if problems:
+        raise SystemExit("inspire add 整批未执行（零副作用）：\n  " + "\n  ".join(problems))
+    return sources
 
+
+def cmd_inspire(cfg, args):
     index = load_inspiration(cfg)
     if args.action == "list":
         rows = index["items"].items()
@@ -1982,24 +2322,28 @@ def cmd_inspire(cfg, args):
             tags = f"  [{', '.join(item['tags'])}]" if item.get("tags") else ""
             print(f"{key}  {item['file']}{tags}  {item.get('note', '')}")
         if not index["items"]:
-            print("inspiration is empty: `inspire add <file…> --note …`")
+            print("inspiration is empty: `inspire add <file…> --pack <大类>/<子组> --approved \"<用户原话>\"`")
         return
 
     if not args.files:
         raise SystemExit("inspire add needs at least one file")
+    # main() 已经校验过的直接用；别的入口（页面 / 测试）直接调到这里时，仍先整批校验再动文件
+    sources = getattr(args, "inspire_sources", None)
+    if sources is None:
+        sources = plan_inspire_add(cfg, args)
     cfg.inspiration_dir.mkdir(parents=True, exist_ok=True)
     with fileio.locked(_inspiration_index_path(cfg)):
-        _inspire_add(cfg, args, load_inspiration(cfg))
+        _inspire_add(cfg, args, load_inspiration(cfg), sources)
     print("next: `sketch <name> --idea … --ref <id>` to try it out")
 
 
-def _inspire_add(cfg, args, index):
+def _inspire_add(cfg, args, index, sources):
     import shutil
 
-    for value in args.files:
-        source = Path(os.path.expanduser(value)).resolve()
-        if not source.is_file():
-            raise SystemExit(f"not a file: {value}")
+    tags = [t.strip() for t in (args.tag or "").replace("，", ",").split(",") if t.strip()]
+    pack = "/".join(pack_parts(getattr(args, "pack", "")))
+    added = 0
+    for source in sources:
         digest = hashlib.sha256(source.read_bytes()).hexdigest()[:8]
         if digest in index["items"]:
             print(f"{digest}  already in inspiration ({index['items'][digest]['file']})")
@@ -2007,16 +2351,310 @@ def _inspire_add(cfg, args, index):
         name = f"{digest}_{source.name}"
         shutil.copy2(source, cfg.inspiration_dir / name)
         index["items"][digest] = {"file": name, "from": str(source), "note": args.note or "",
-                                  "tags": [t for t in (args.tag or "").replace("，", ",").split(",") if t.strip()],
-                                  **({"pack": "/".join(pack_parts(args.pack))} if args.pack else {}),
+                                  "tags": tags, "pack": pack, "approved": (getattr(args, "approved", "") or "").strip(),
                                   "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        if cfg.taxonomy.enabled:
+            index["items"][digest]["schema_version"] = 2
         print(f"{digest}  {name}")
-    fileio.write_json(_inspiration_index_path(cfg), index)
+        added += 1
+    if added:
+        fileio.write_json(_inspiration_index_path(cfg), index)
+
+
+def _safe_slug(value):
+    """Turn an external provider / model label into a safe filename & manifest key token."""
+    return re.sub(r"[^0-9A-Za-z._-]+", "-", str(value or "").strip()).strip("-._").lower()
+
+
+def _import_alias(provider, model=""):
+    p = _safe_slug(provider)
+    m = _safe_slug(model)
+    return f"imp-{p}-{m}" if m and m != p else f"imp-{p}"
+
+
+def plan_import(cfg, args):
+    """整批校验 `import`：卡必须存在、provider 合法、所有文件为真实图片；失败直接报错，零副作用。"""
+    card = load_card(cfg, args.card)
+    provider = (args.provider or "").strip()
+    model = (args.model or "").strip()
+    v2 = cfg.v2(card)
+    problems = v2_card_problems(cfg, card)
+    if problems:
+        raise SystemExit("; ".join(problems))
+    if not provider or not _safe_slug(provider):
+        raise SystemExit("import requires a non-empty --provider (e.g. --provider external)")
+    if not v2 and model and not _safe_slug(model):
+        raise SystemExit(f"invalid --model label: {model!r}")
+    canonical = None
+    feature = getattr(args, "feature", "") or ""
+    if v2:
+        requested = model if naming.has_model_vocab(cfg.vocab, "image") else (model or _import_alias(provider))
+        canonical = naming.resolve_model(requested, cfg.vocab, "image")
+    elif feature:
+        raise SystemExit("--feature requires taxonomy or naming.strict_v2")
+    if not args.files:
+        raise SystemExit("import needs at least one image file")
+    items = []
+    for raw_path in args.files:
+        path = Path(os.path.expanduser(raw_path)).resolve()
+        if not path.is_file():
+            raise SystemExit(f"import file not found: {raw_path}")
+        raw = path.read_bytes()
+        if not raw:
+            raise SystemExit(f"import file is empty: {raw_path}")
+        ext, _mime, width, height, has_alpha = sniff_image(raw)
+        if ext not in ("png", "jpg", "webp"):
+            raise SystemExit(f"import only accepts PNG / JPEG / WEBP images: {raw_path}")
+        items.append({
+            "source": path, "raw": raw, "ext": ext, "width": width, "height": height,
+            "has_alpha": has_alpha, "sha256": hashlib.sha256(raw).hexdigest(),
+        })
+    if canonical:
+        for item in items:
+            naming.build_media_name(card["id"], canonical, 1, feature, "." + item["ext"],
+                                    policy=cfg.naming_policy, legacy_card=card.get("schema_version") != 2)
+    return {"card": card, "provider": provider, "model": model, "items": items,
+            "canonical_model": canonical, "feature": feature}
+
+
+def cmd_import(cfg, args):
+    """Import externally generated images into an existing card as unreviewed candidates (copy, never delete)."""
+    plan = getattr(args, "import_plan", None) or plan_import(cfg, args)
+    card = plan["card"]
+    card_id = str(card["id"])
+    provider, model = plan["provider"], plan["model"]
+    alias = _import_alias(provider, model)
+    canonical = plan["canonical_model"]
+    display_model = f"{provider}/{model}" if model else provider
+    prompt_text = (args.prompt or "").strip()
+    note_text = (args.note or "").strip()
+    candidates_dir = cfg.output_dir / "candidates"
+    raw_cards = all_cards(cfg)
+
+    def apply(manifest):
+        # 收集同卡已有候选的完整 sha256（含历史未记 sha256 的文件），保证同卡不重复入库
+        seen = {}
+        for key, job in (manifest.get("jobs") or {}).items():
+            if key.split("|")[0] != card_id or not job.get("candidate"):
+                continue
+            cname = Path(job["candidate"]).name
+            digest = job.get("sha256")
+            if not digest:
+                existing = candidates_dir / cname
+                if existing.is_file():
+                    digest = hashlib.sha256(existing.read_bytes()).hexdigest()
+            if digest:
+                seen[digest] = cname
+        if candidates_dir.is_dir():
+            for existing in sorted(candidates_dir.glob(f"{card_id}_*")):
+                if not existing.is_file() or existing.name in seen.values():
+                    continue
+                if _candidate_card_id(cfg, existing.name, manifest, raw_cards) == card_id:
+                    seen[hashlib.sha256(existing.read_bytes()).hexdigest()] = existing.name
+
+        prefix = f"{card_id}|{alias}|"
+        max_idx = 0
+        for key in manifest.get("jobs") or {}:
+            if key.startswith(prefix):
+                tail = key[len(prefix):]
+                if tail.isdigit():
+                    max_idx = max(max_idx, int(tail))
+        next_idx = max_idx + 1
+
+        imported, skipped, pending = [], [], []
+        reservations = dict(manifest["jobs"])
+        for item in plan["items"]:
+            sha = item["sha256"]
+            if sha in seen:
+                skipped.append((item["source"].name, seen[sha]))
+                continue
+            record = {}
+            if canonical:
+                record = media_reservation(cfg, card, canonical, reservations, forgotten=manifest.get("forgotten", ()),
+                                           feature=plan["feature"],
+                                           ext="." + item["ext"])
+                fname = record["media_name"]
+                key = job_key(card_id, f"import:{canonical}", record["seq"])
+                record.update(model_alias=model or canonical, run_dir=None)
+            else:
+                while any((candidates_dir / f"{card_id}_{alias}_{next_idx}.{ext}").exists()
+                          for ext in ("png", "jpg", "jpeg", "webp")):
+                    next_idx += 1
+                fname = f"{card_id}_{alias}_{next_idx}.{item['ext']}"
+                key = job_key(card_id, alias, next_idx)
+            target = candidates_dir / fname
+            reservations[key] = {
+                **record,
+                "status": "ok",
+                "origin": "import",
+                "provider": provider,
+                "upstream_model": model,
+                "display_model": display_model,
+                "candidate": str(target.relative_to(cfg.output_dir)),
+                "sha256": sha,
+                "source_file": str(item["source"]),
+                "prompt": prompt_text,
+                "note": note_text,
+                "width": item["width"],
+                "height": item["height"],
+                "has_alpha": item["has_alpha"],
+                "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            pending.append((key, target, item["raw"]))
+            seen[sha] = fname
+            imported.append((fname, item["width"], item["height"]))
+            next_idx += 1
+        if pending:
+            candidates_dir.mkdir(parents=True, exist_ok=True)
+        written = []
+        try:
+            for key, target, raw in pending:
+                write_candidate(target, raw)
+                written.append(target)
+                manifest["jobs"][key] = reservations[key]
+        except OSError:
+            for target in written:
+                target.unlink()
+            raise
+        return imported, skipped
+
+    imported, skipped = update_manifest(cfg, apply)
+    if note_text and imported:
+        def add_notes(review):
+            for fname, _w, _h in imported:
+                _set_note_kept(review["candidates"].setdefault(fname, {}), {"note": note_text})
+        update_review(cfg, card_id, add_notes)
+    if imported:
+        update_card(cfg, card_id, lambda fresh: fresh.__setitem__("status", "generated")
+                    if fresh.get("status", "draft") == "draft" else None)
+
+    zone = "trial zone" if card.get("kind") == "sketch" else "review zone"
+    for fname, width, height in imported:
+        print(f"imported -> {fname}  {width}x{height}  ({display_model}, {zone}, unreviewed)")
+    for src_name, existing_name in skipped:
+        print(f"duplicate skipped: {src_name} matches existing {existing_name}")
+    print(f"done: {len(imported)} imported, {len(skipped)} skipped")
+
+
+TIER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
+
+
+def plan_variant_add(cfg, args):
+    """校验 `variant add`：卡与候选必须存在且归属一致、tier 合法、文件是真实图片；失败零副作用。"""
+    card = load_card(cfg, args.card)
+    if not (args.candidate or "").strip():
+        raise SystemExit("variant add requires <candidate>")
+    if not (args.file or "").strip():
+        raise SystemExit("variant add requires <file>")
+    cand_name = candidate_name(cfg, args.candidate, card_id=card["id"])
+    tier = (args.tier or "").strip().lower()
+    if not tier or not TIER_RE.match(tier):
+        raise SystemExit("variant add requires a valid --tier (e.g. 2k, 4k)")
+    src = Path(os.path.expanduser(args.file)).resolve()
+    if not src.is_file():
+        raise SystemExit(f"variant file not found: {args.file}")
+    raw = src.read_bytes()
+    if not raw:
+        raise SystemExit(f"variant file is empty: {args.file}")
+    ext, _mime, width, height, has_alpha = sniff_image(raw)
+    if ext not in ("png", "jpg", "webp"):
+        raise SystemExit(f"variant only accepts PNG / JPEG / WEBP images: {args.file}")
+    sha = hashlib.sha256(raw).hexdigest()
+    manifest = load_manifest(cfg)
+    existing = next((v for v in (manifest.get("variants") or {}).get(cand_name) or []
+                     if v.get("tier") == tier), None)
+    if existing and existing.get("sha256") != sha and not args.replace:
+        raise SystemExit(f"variant {tier} already exists for {cand_name}; pass --replace to overwrite")
+    job_id = ""
+    for key, job in (manifest.get("jobs") or {}).items():
+        if job.get("candidate") and Path(job["candidate"]).name == cand_name:
+            job_id = key
+            break
+    return {
+        "card": card, "candidate": cand_name, "job_key": job_id, "tier": tier,
+        "source": src, "raw": raw, "ext": ext, "width": width, "height": height,
+        "has_alpha": has_alpha, "sha256": sha,
+    }
+
+
+def cmd_variant(cfg, args):
+    """Attach derived resolution variants (e.g. 2k/4k) to an existing candidate without touching review/pick."""
+    if args.action == "list":
+        card = load_card(cfg, args.card)
+        card_id = str(card["id"])
+        target_cand = candidate_name(cfg, args.candidate, card_id=card_id) if (args.candidate or "").strip() else ""
+        manifest = load_manifest(cfg)
+        variants_map = manifest.get("variants") or {}
+        found = 0
+        for cname in sorted(variants_map):
+            if target_cand and cname != target_cand:
+                continue
+            entries = [v for v in (variants_map.get(cname) or []) if str(v.get("card") or _candidate_card_id(cfg, cname, manifest)) == card_id]
+            for v in entries:
+                found += 1
+                dims = f"{v.get('width')}x{v.get('height')}" if v.get("width") and v.get("height") else ""
+                print(f"{cname}  [{v.get('tier')}]  {v.get('file')}  {dims}".rstrip())
+        if not found:
+            print("(no variants)")
+        return
+
+    plan = getattr(args, "variant_plan", None) or plan_variant_add(cfg, args)
+    card_id = str(plan["card"]["id"])
+    cand_name = plan["candidate"]
+    tier = plan["tier"]
+    variants_dir = cfg.output_dir / "variants"
+
+    def apply(manifest):
+        variants_map = manifest.setdefault("variants", {})
+        entries = list(variants_map.get(cand_name) or [])
+        old = next((v for v in entries if v.get("tier") == tier), None)
+        if old:
+            if old.get("sha256") == plan["sha256"]:
+                return "exists", old
+            if not args.replace:
+                raise SystemExit(f"variant {tier} already exists for {cand_name}; pass --replace to overwrite")
+        variants_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"{Path(cand_name).stem}__{tier}.{plan['ext']}"
+        target = variants_dir / fname
+        fileio.atomic_write(target, plan["raw"])
+        if old and old.get("file"):
+            old_path = (cfg.output_dir / old["file"]).resolve()
+            if old_path != target.resolve() and variants_dir.resolve() in old_path.parents:
+                old_path.unlink(missing_ok=True)
+        entry = {
+            "tier": tier,
+            "file": str(target.relative_to(cfg.output_dir)),
+            "candidate": cand_name,
+            "card": card_id,
+            "job_key": plan["job_key"],
+            "width": plan["width"],
+            "height": plan["height"],
+            "has_alpha": plan["has_alpha"],
+            "sha256": plan["sha256"],
+            "provider": (args.provider or "").strip(),
+            "model": (args.model or "").strip(),
+            "source_file": str(plan["source"]),
+            "note": (args.note or "").strip(),
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        entries = [v for v in entries if v.get("tier") != tier]
+        entries.append(entry)
+        variants_map[cand_name] = entries
+        return ("replaced" if old else "added"), entry
+
+    status, entry = update_manifest(cfg, apply)
+    if status == "exists":
+        print(f"variant [{tier}] already attached to {cand_name} -> {entry['file']} (unchanged)")
+    else:
+        print(f"variant {status}: {cand_name} [{tier}] -> output/{entry['file']}  "
+              f"{entry['width']}x{entry['height']} (original candidate & review untouched)")
 
 
 def cmd_sketch(cfg, args):
-    """A throwaway card: one idea + a few references, straight to candidates."""
+    """A throwaway card: one idea + a few references, straight to candidates (or --no-generate to scaffold only)."""
     card_id = args.name if args.name.startswith("s-") else f"s-{args.name}"
+    if cfg.v2():
+        card_id = naming.normalize_name(card_id)
     try:
         parse_promote(args.promote, cfg.kinds)
     except ValueError as error:
@@ -2024,40 +2662,60 @@ def cmd_sketch(cfg, args):
     cfg.cards_dir.mkdir(parents=True, exist_ok=True)
     # 只认 id 完全相同的那张：按文件名前缀找，`s-a` 会撞上 `s-a_b` 的卡并把它覆盖掉
     existing = [card["_path"] for card in all_cards(cfg) if str(card.get("id")) == card_id]
-    fresh = cfg.cards_dir / f"{card_id}_sketch.yaml"
+    fresh = cfg.cards_dir / (f"{card_id}.yaml" if cfg.v2() else f"{card_id}_sketch.yaml")
     if not existing and fresh.exists():
         raise SystemExit(f"{fresh.name} exists but belongs to another card (its id is not {card_id}); pick another name")
     refs = [_resolve_inspiration(cfg, value) for value in args.ref or []]
-    if existing and not args.idea and not refs:
+    no_generate = bool(getattr(args, "no_generate", False))
+    has_updates = any((args.idea, refs, args.pack, args.outfit, args.promote, args.title, args.aspect,
+                       args.style, args.model, args.transparent, args.bare))
+    if existing and not has_updates:
         print(f"re-using sketch {existing[0].name}")
     else:
+        previous = yaml.safe_load(existing[0].read_text(encoding="utf-8")) or {} if existing else {}
         card = {
-            "id": card_id, "title": args.title or args.name, "slug": card_id, "kind": "sketch",
-            "pack": "/".join(pack_parts(args.pack)), "outfit": args.outfit or "", "promote": args.promote or "",
-            "status": "draft", "hold": "", "created": time.strftime("%Y%m%d"),
-            "model": args.model or "", "aspect": args.aspect or "1024x1024",
-            "transparent": bool(args.transparent), "prompt_mode": "lean", "skip_blocks": bool(args.bare),
-            "styles": args.style or [], "characters": [], "props": [],
-            "extra_prompt": args.idea or "",
-            "refs": {"roles": args.role or [], "files": refs, "confirmed": [], "urls": []},
-            "feedback": [], "sources": [f"sketch {time.strftime('%Y-%m-%d')}"],
+            "id": card_id, "title": args.title or previous.get("title") or args.name, "slug": card_id, "kind": "sketch",
+            "pack": "/".join(pack_parts(args.pack)) or previous.get("pack") or "",
+            "outfit": args.outfit or previous.get("outfit") or "",
+            "promote": args.promote or previous.get("promote") or "",
+            "status": previous.get("status") or "draft", "hold": previous.get("hold") or "",
+            "created": previous.get("created") or time.strftime("%Y%m%d"),
+            "model": args.model or previous.get("model") or "",
+            "aspect": args.aspect or previous.get("aspect") or "1024x1024",
+            "transparent": bool(args.transparent) or bool(previous.get("transparent")),
+            "prompt_mode": "lean", "skip_blocks": bool(args.bare) or bool(previous.get("skip_blocks")),
+            "styles": args.style or previous.get("styles") or [], "characters": previous.get("characters") or [],
+            "props": previous.get("props") or [],
+            "extra_prompt": args.idea or previous.get("extra_prompt") or "",
+            "refs": {"roles": args.role or (previous.get("refs") or {}).get("roles") or [],
+                     "files": refs or (previous.get("refs") or {}).get("files") or [],
+                     "confirmed": (previous.get("refs") or {}).get("confirmed") or [],
+                     "urls": (previous.get("refs") or {}).get("urls") or []},
+            "feedback": previous.get("feedback") or [],
+            "sources": previous.get("sources") or [f"sketch {time.strftime('%Y-%m-%d')}"],
         }
-        if existing:
-            previous = yaml.safe_load(existing[0].read_text(encoding="utf-8")) or {}
-            card["feedback"] = previous.get("feedback") or []
-            card["pack"] = card.get("pack") or previous.get("pack") or ""
-            card["outfit"] = card.get("outfit") or previous.get("outfit") or ""
-            card["promote"] = card.get("promote") or previous.get("promote") or ""
-            card["_path"] = existing[0]
-        else:
-            card["_path"] = fresh
-        if not card["extra_prompt"]:
+        card["_path"] = existing[0] if existing else fresh
+        if previous.get("schema_version") == 2 or not existing and cfg.v2():
+            card["schema_version"] = 2
+            naming.validate_card_id(card_id, cfg.naming_policy, stem=card["_path"].stem)
+            validate_pack(cfg, card.get("pack"))
+        if not no_generate and not card["extra_prompt"]:
             raise SystemExit("a sketch needs --idea (the inspiration in one paragraph, English works best)")
-        save_card(card)
+        if not existing and cfg.v2():
+            with fileio.locked(cfg.cards_dir / "cards"):
+                validate_new_id(cfg, card_id, fresh)
+                save_card(card)
+        else:
+            save_card(card)
         print(f"sketch card -> {card['_path']}")
         if not card["promote"]:
             print("note: no --promote -- the review page will guess what this sketch is for "
                   "(say it up front: --promote character:<名> | prop:<名> | \"style:<名> @画风|@氛围\" | template:<名>)")
+
+    if no_generate:
+        print(f"next: `import {card_id} <image> --provider <source> [--model <model>]` "
+              f"or `generate {card_id} --approved \"…\"`")
+        return
 
     compose_args = argparse.Namespace(card=card_id, var=args.var, force=args.force)
     cmd_compose(cfg, compose_args)
@@ -2068,21 +2726,26 @@ def cmd_sketch(cfg, args):
 
 
 def _find_candidate(cfg, name):
-    """Candidate file name (or prefix) -> (path, job record or {})."""
+    """Exact candidate file name (or exact stem + ext), or local image path -> (path, job record or {})."""
     candidates_dir = cfg.output_dir / "candidates"
-    path = candidates_dir / name
+    base = Path(str(name)).name
+    path = candidates_dir / base
     if not path.is_file():
-        matches = sorted(candidates_dir.glob(f"{name}*"))
-        if not matches:
+        matches = sorted(p for p in candidates_dir.glob("*") if p.is_file() and p.stem == base)
+        if len(matches) == 1:
+            path = matches[0]
+        elif len(matches) > 1:
+            raise SystemExit(f"candidate ambiguous: {name} ({', '.join(p.name for p in matches)})")
+        else:
             path = Path(os.path.expanduser(name))
             if not path.is_file():
                 raise SystemExit(f"candidate not found: {name}")
             return path.resolve(), {}
-        path = matches[0]
     for key, job in load_manifest(cfg)["jobs"].items():
         if job.get("candidate") and Path(job["candidate"]).name == path.name:
             return path, {"key": key, **job}
-    return path, {}
+    owner = _candidate_card_id(cfg, path.name)
+    return path, {"card_id": owner} if owner else {}
 
 
 def _update_sources(cfg, section, name, entry_update):
@@ -2219,7 +2882,7 @@ def cmd_promote(cfg, args):
         raise SystemExit(f"bad name {name!r}: it points outside {base_dir}")
 
     candidate, job = _find_candidate(cfg, args.candidate)
-    card_id = job.get("key", "").split("|")[0] or None
+    card_id = job.get("card_id") or job.get("key", "").split("|")[0] or None
     stamp = time.strftime("%Y-%m-%d")
     log_entry = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "as": args.as_, "candidate": str(candidate),
                  "card": card_id, "approved": args.approved, "note": args.note or ""}
@@ -2341,6 +3004,8 @@ def cmd_providers(cfg, args):
 def cmd_doctor(cfg, args):
     print(f"project : {cfg.name}  ({cfg.path})")
     print(f"root    : {cfg.root}")
+    if cfg.taxonomy.enabled:
+        print(f"taxonomy: {len(cfg.taxonomy.categories())} categories; {catalog.migration_count(cfg)} migrated entries")
     for label, path in (("cards", cfg.cards_dir), ("prompt_zone", cfg.prompt_zone),
                         ("blocks", cfg.blocks_dir), ("output", cfg.output_dir), ("sources", cfg.sources_file)):
         exists = "ok" if Path(path).exists() else "missing"
@@ -2392,6 +3057,13 @@ def build_parser():
     parser.add_argument("--root", help="override the project root from the config")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    def add(name, func, help_text):
+        p = sub.add_parser(name, help=help_text)
+        p.set_defaults(func=func)
+        return p
+
+    catalog.add_commands(add)
+
     p = sub.add_parser("init", help="scaffold a project (config, blocks, prompt zone, sources)")
     p.add_argument("--force", action="store_true", help="overwrite existing scaffold files")
     p.set_defaults(func=cmd_init)
@@ -2429,6 +3101,28 @@ def build_parser():
     p.add_argument("--refresh", action="store_true", help="accept a prompt recomputed from a changed card")
     p.add_argument("--force", action="store_true", help="send even if over the reject threshold")
     p.set_defaults(func=cmd_generate)
+
+    p = sub.add_parser("import", help="import externally generated image(s) into an existing card as unreviewed candidates")
+    p.add_argument("card", help="existing card id (sketch -> trial zone, regular card -> review zone)")
+    p.add_argument("files", nargs="+", help="local image file(s) to copy into output/candidates/")
+    p.add_argument("--provider", required=True, help="external source / platform name")
+    p.add_argument("--model", default="", help="external model name (required with a model vocabulary)")
+    p.add_argument("--feature", "--tag", dest="feature", default="", help="short v2 filename suffix")
+    p.add_argument("--prompt", default="", help="prompt used to produce these images (optional)")
+    p.add_argument("--note", default="", help="optional note attached to imported candidates (verdict stays unreviewed)")
+    p.set_defaults(func=cmd_import)
+
+    p = sub.add_parser("variant", help="attach or list derived variants (e.g. 2k/4k upscales) on an existing candidate")
+    p.add_argument("action", choices=["add", "list"])
+    p.add_argument("card", help="card id")
+    p.add_argument("candidate", nargs="?", default="", help="candidate file name or stem (required for add)")
+    p.add_argument("file", nargs="?", default="", help="local variant image file (required for add)")
+    p.add_argument("--tier", default="", help="variant tier label, e.g. 2k, 4k (required for add)")
+    p.add_argument("--provider", default="", help="source / tool that produced the variant")
+    p.add_argument("--model", default="", help="model used for the variant")
+    p.add_argument("--note", default="", help="optional note for this variant")
+    p.add_argument("--replace", action="store_true", help="overwrite an existing variant of the same tier")
+    p.set_defaults(func=cmd_variant)
 
     p = sub.add_parser("forget", help="drop an 'unknown' job after a human checked nothing was made, so it may be sent again")
     p.add_argument("card")
@@ -2514,7 +3208,9 @@ def build_parser():
     p.add_argument("files", nargs="*")
     p.add_argument("--note", default="")
     p.add_argument("--tag", default="", help="comma-separated tags (add), or one tag to filter (list)")
-    p.add_argument("--pack", default="", help="asset pack path, e.g. 风格/雪 (default: 风格/<first tag>)")
+    p.add_argument("--pack", default="",
+                   help="参考区归类，必须写 <大类>/<子组>，如 风格/雪；大类要在 inspiration.categories 白名单里")
+    p.add_argument("--approved", help="用户明确说收录这张图的原话（required；写入索引留痕）")
     p.set_defaults(func=cmd_inspire)
 
     p = sub.add_parser("sketch", help="short line: one idea + references -> candidates, no full card")
@@ -2534,6 +3230,8 @@ def build_parser():
     p.add_argument("--model")
     p.add_argument("--budget", type=int, help="total candidates for this sketch+model")
     p.add_argument("--approved", help="who/when approved this paid batch")
+    p.add_argument("--no-generate", "--card-only", dest="no_generate", action="store_true",
+                   help="only create/update the sketch card without calling generate (for external `import`)")
     p.add_argument("--var", action="append", metavar="NAME=VALUE")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=cmd_sketch)
@@ -2564,13 +3262,32 @@ def build_parser():
 
 
 def main():
+    try:
+        run()
+    except (taxonomy.TaxonomyError, naming.NamingError, sourcekinds.KindError) as error:
+        raise SystemExit(f"error: {error}") from error
+
+
+def run():
     args = build_parser().parse_args()
     cfg = Config(args.config)
     if cfg.missing and args.command != "init":
         raise SystemExit(f"config not found: {cfg.path}\nrun `{Path(__file__).name} --config {args.config} init` first")
     if args.root:
         cfg.root = Path(args.root).expanduser().resolve()
-    writes = args.command in WRITE_COMMANDS and not (args.command == "inspire" and args.action == "list")
+    if not cfg.missing and ("taxonomy" in cfg.raw or args.command == "doctor"):
+        _ = cfg.kinds
+    # 写操作预校验：先整批校验再进入写流程（失败时不建目录 / 不拿锁 / 不存版本）
+    if args.command == "inspire" and args.action == "add" and args.files:
+        args.inspire_sources = plan_inspire_add(cfg, args)
+    elif args.command == "import":
+        args.import_plan = plan_import(cfg, args)
+    elif args.command == "variant" and args.action == "add":
+        args.variant_plan = plan_variant_add(cfg, args)
+    writes = args.command in WRITE_COMMANDS and not (
+        (args.command == "inspire" and args.action == "list")
+        or (args.command == "variant" and args.action == "list")
+    )
     if writes:
         save_version(cfg, f"手动改动（{args.command} 前自动存）")
     try:

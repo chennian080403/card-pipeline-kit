@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from common import die, read_json, write_json
-from core import jobs, jsonio
+from core import jobs, jsonio, naming
 
 MANIFEST_FORMAT = "video-card-pipeline/manifest-v1"
 
@@ -50,7 +51,10 @@ def job_key(card_id, alias, n):
     return f"{card_id}|{alias}|{n}"
 
 
-def take_name(card_id, alias, n):
+def take_name(card_id, alias, n, *, v2=False, policy=None, legacy_card=False):
+    if v2:
+        return Path(naming.build_media_name(card_id, alias, n, ext=".mp4", policy=policy,
+                                            legacy_card=legacy_card)).stem
     return f"{card_id}_{alias}_{n}"
 
 
@@ -58,14 +62,22 @@ def take_meta_path(cfg, name):
     return cfg.takes_dir / f"{name}.json"
 
 
-def load_take(cfg, name):
-    path = take_meta_path(cfg, name)
+def load_take(cfg, name, card_id=None):
+    if Path(name).name != name:
+        die(f"invalid take name {name!r}")
+    exact = Path(name).stem if Path(name).suffix.lower() in {".mp4", ".json"} else name
+    path = take_meta_path(cfg, exact)
     if not path.is_file():
-        matches = sorted(cfg.takes_dir.glob(f"{name}*.json"))
-        if not matches:
-            die(f"no take {name} in {cfg.takes_dir}")
+        matches = [p for p in sorted(cfg.takes_dir.glob("*.json")) if p.stem.startswith(exact)]
+        if len(matches) != 1:
+            die(f"{'ambiguous' if matches else 'no'} take {name} in {cfg.takes_dir}")
         path = matches[0]
-    return json.loads(path.read_text(encoding="utf-8"))
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    owner = meta.get("card_id") or meta.get("card")
+    if (card_id is not None and owner != card_id or not owner or not path.stem.startswith(f"{owner}_")
+            or path.stem != exact and exact != owner and not exact.startswith(f"{owner}_")):
+        die(f"take {path.stem} does not belong to card {card_id or exact}")
+    return meta
 
 
 def save_take(cfg, meta):
@@ -76,7 +88,7 @@ def card_takes(cfg, card_id):
     takes = []
     for path in sorted(cfg.takes_dir.glob(f"{card_id}_*.json")):
         meta = json.loads(path.read_text(encoding="utf-8"))
-        if meta.get("card") == card_id:
+        if (meta.get("card_id") or meta.get("card")) == card_id:
             takes.append(meta)
     return takes
 

@@ -77,7 +77,7 @@ main { padding: 18px 22px 40px; min-width: 0; }
 .nav-head.kb, .nav-sub.kb { box-shadow: inset 0 0 0 2px var(--accent); }
 .media { aspect-ratio: 1; background: var(--panel-2); display: flex; align-items: center; justify-content: center; }
 .media.alpha { background: repeating-conic-gradient(var(--panel-2) 0 25%, var(--panel) 0 50%) 0 0/14px 14px; }
-.media img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.media img, .media video { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .card-info { padding: 9px 11px 11px; display: flex; flex-direction: column; gap: 4px; }
 .card-info .t { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-info .m { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
@@ -102,7 +102,8 @@ dialog::backdrop { background: rgba(10,12,18,.6); }
 .dialog-top strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dialog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; max-height: calc(94vh - 56px); }
 .viewer { background: #0f1115; display: flex; align-items: center; justify-content: center; min-height: 420px; padding: 10px; }
-.viewer img { max-width: 100%; max-height: calc(94vh - 80px); object-fit: contain; cursor: zoom-in; }
+.viewer img, .viewer video { max-width: 100%; max-height: calc(94vh - 80px); object-fit: contain; }
+.viewer img { cursor: zoom-in; }
 .details { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 .details h4 { margin: 0; font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
 .details .m { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
@@ -125,7 +126,7 @@ dialog::backdrop { background: rgba(10,12,18,.6); }
 .folder:hover { border-color: var(--muted); }
 .folder.is-empty { opacity: .5; }
 .folder .covers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; height: 86px; overflow: hidden; background: var(--panel-2); }
-.folder .covers img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.folder .covers img, .folder .covers video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .folder .covers .none { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
 .folder .f-info { padding: 8px 11px 10px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .folder .f-name { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -151,7 +152,7 @@ dialog.lb { border: 0; padding: 0; margin: 0; max-width: none; max-height: none;
   display: none; align-items: center; justify-content: center; cursor: zoom-out; }
 dialog.lb[open] { display: flex; }
 dialog.lb::backdrop { background: rgba(0, 0, 0, .78); }
-dialog.lb img { max-width: 94vw; max-height: 90vh; object-fit: contain; border-radius: 6px; box-shadow: 0 12px 48px rgba(0, 0, 0, .5); cursor: default; }
+dialog.lb img, dialog.lb video { max-width: 94vw; max-height: 90vh; object-fit: contain; border-radius: 6px; box-shadow: 0 12px 48px rgba(0, 0, 0, .5); cursor: default; }
 dialog.lb #lb-cap { position: fixed; left: 0; right: 0; bottom: 14px; text-align: center; color: #ddd; font-size: 13px; pointer-events: none; }
 </style>
 </head>
@@ -165,18 +166,19 @@ dialog.lb #lb-cap { position: fixed; left: 0; right: 0; bottom: 14px; text-align
   <button class="b" id="reload">刷新</button>
 </header>
 <div class="layout"><aside id="nav"></aside><main id="view"></main></div>
-<dialog id="lb" class="lb"><img id="lb-img" alt=""><div id="lb-cap"></div></dialog>
+<dialog id="lb" class="lb"><img id="lb-img" alt=""><video id="lb-vid" controls muted preload="metadata" playsinline style="display:none"></video><div id="lb-cap"></div></dialog>
 <dialog id="detail">
   <div class="dialog-top"><strong id="d-title"></strong>
     <button class="b" id="d-prev">← 上一项</button><button class="b" id="d-next">下一项 →</button><button class="b" id="d-close">关闭</button>
     <span class="m" style="font-size:12px" id="d-keys">键盘：← → 切换 · 1 要 · 3 不要（记完跳下一张）· 空格 跳过 · 回车 大图 · Esc / ⌫ 退出</span></div>
-  <div class="dialog-layout"><div class="viewer"><img id="d-img" alt=""></div><div class="details" id="d-body"></div></div>
+  <div class="dialog-layout"><div class="viewer"><img id="d-img" alt=""><video id="d-vid" controls muted preload="metadata" playsinline style="display:none"></video></div><div class="details" id="d-body"></div></div>
 </dialog>
 <div id="toast"></div>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const isUrl = p => /^https?:/.test(p || "");
+const isVideo = f => /\.(mp4|mov|webm|m4v)(\?.*)?$/i.test(f || "");
 const img = p => !p ? "" : isUrl(p) ? p : `/file?path=${encodeURIComponent(p)}`;
 const VERD = {pass: ["通过", "ok"], borderline: ["待定", "warn"], fail: ["不通过", "bad"]};
 const LIB = {draft: ["草稿", ""], pending: ["待定", "warn"], final: ["定稿", "ok"], rejected: ["放弃", "bad"]};
@@ -190,7 +192,7 @@ const ZONES = {
   trial: {line: "short", label: "试样区", tree: true, tip: "短效草图试出来的样子（剑长什么样、画风选哪种）。喜欢哪张就点开「定为真源」；不要的进废稿区。"},
   // 长效顺序：出图 → 素材 → 真源 → 废稿。提示词模板和沉淀记录并进真源区（真源只分「图」和「字」）
   review: {line: "long", label: "出图区 · 审成品", tree: true, tip: "镜头卡出的图。每张只问一件事：要（进素材区）还是不要（进废稿区）；拿不准就先不点。喜欢它的长相 / 画风 / 氛围 / 构图，点开「定为真源」。"},
-  assets: {line: "long", label: "素材区", tree: true, tip: "点了「要」的图，最后用进片子里的成品。进来是草稿，你点「定稿」才算定稿。素材不是真源。定稿就是定下关键帧（关键的参考图）：视频要求只认定稿时，视频卡的关键帧只能用定稿图；正被视频卡用着的标「关键帧」。点开：1 定稿 · 2 移回原处（回出图区 / 试样区，变回未审）· 3 丢弃进废稿区。"},
+  assets: {line: "long", label: "素材区", tree: true, tip: "点了「要」的图，最后用进片子里的成品。进来是草稿，你点「定稿」才算定稿。素材不是真源。定稿就是定下关键帧（关键的参考图）：视频要求只认定稿时，视频卡的关键帧只能用定稿图；正被视频卡用着的标「关键帧」。点开：1 定稿 · 2 移回原处（回出图区 / 试样区，变回未审）· 3 丢弃进废稿区 · D 定为真源。"},
   sources: {line: "long", label: "真源区", tree: true, tip: "以后出图要照着来的东西，只分两种：「图」（长相、画风、氛围的样张，画风 / 氛围还带一段描述）和「字」（构图模板）。一个名字只认一张，换了引用它的卡都跟着变，旧的进历史；「记录」里是每次定真源的账。点开：2 移回素材区（撤掉这次定真源，有旧版就换回旧版；原图回素材区，草图回试样区）· 3 撤掉真源、原图进废稿区。"},
   // 废稿只放一处：试样和出图标了不通过的都在这里，图上标「草图 / 成品」
   rejects: {line: "long", label: "废稿区", tree: true, tip: "点了「不要」的图都在这里，按原来的包放，图上标着「草图」或「成品」。点开：1 要（进素材区）· 2 移回原位（回出图区 / 试样区，变回未审）。"},
@@ -245,7 +247,9 @@ function redrawDetail() {
 function toast(msg, bad, ms) { const t = $("toast"); t.textContent = msg; t.className = bad ? "bad" : ""; t.style.display = "block";
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms || (bad ? 7000 : 3200)); }
 const picName = f => (f || "").split("/").pop().replace(/\.[^.]+$/, "");   // s-剑_sunburst_2：同包几张只差 _1 / _2，提示里带上
-const homeOf = card => card.startsWith("s-") ? "试样区" : "出图区";
+const cardById = id => (S && S.cards || []).find(c => c.id === id);
+const isSketchCard = id => { const c = cardById(id); return c ? c.kind === "sketch" : String(id || "").startsWith("s-"); };
+const homeOf = card => isSketchCard(card) ? "试样区" : "出图区";
 
 // ---------------- data -> items (every item carries .pack) ----------------
 const shortName = f => f.split("/").pop().replace(/^[0-9a-f]{8}_/, "").replace(/\.[^.]+$/, "");
@@ -266,9 +270,10 @@ function zoneItems(g) {
 const pathOf = it => it.pack.join("/");
 const under = (it, path) => !path || pathOf(it) === path || pathOf(it).startsWith(path + "/");
 // children of a pack node: [{name, path, items}] ; level 1 always lists the configured 大包 even when empty
-function children(items, path) {
+const zoneCategories = g => g === "reference" ? S.inspiration_categories : S.categories;
+function children(items, path, g) {
   const depth = path ? path.split("/").length : 0, map = new Map();
-  if (!path) S.categories.forEach(c => map.set(c, []));
+  if (!path) zoneCategories(g).forEach(c => map.set(c, []));
   for (const it of items) {
     if (!under(it, path) || it.pack.length <= depth) continue;
     const name = it.pack[depth]; if (!map.has(name)) map.set(name, []); map.get(name).push(it);
@@ -308,7 +313,7 @@ function syncUrl() {
 function livePath() {
   const items = zoneItems(nav.group);
   let parts = nav.path ? nav.path.split("/") : [];
-  while (parts.length && !items.some(it => under(it, parts.join("/"))) && !(parts.length === 1 && S.categories.includes(parts[0]))) parts.pop();
+  while (parts.length && !items.some(it => under(it, parts.join("/"))) && !(parts.length === 1 && zoneCategories(nav.group).includes(parts[0]))) parts.pop();
   return parts.join("/");
 }
 function navBtn(cls, g, path, label, n, depth) {
@@ -318,7 +323,7 @@ function navBtn(cls, g, path, label, n, depth) {
 }
 function navTree(g, items, path, depth) {
   let h = "";
-  for (const ch of children(items, path)) {
+  for (const ch of children(items, path, g)) {
     h += navBtn("nav-sub", g, ch.path, ch.name, ch.items.length, depth);
     const open = nav.group === g && (nav.path === ch.path || nav.path.startsWith(ch.path + "/"));
     if (open) h += navTree(g, items, ch.path, depth + 1);
@@ -357,7 +362,7 @@ function badgeFor(it) {
     return `${nav.group === "rejects" ? `<span class="badge${isSketch(it) ? " acc" : ""}">${isSketch(it) ? "草图" : "成品"}</span><span class="badge bad">不要</span>` : ""}${old ? `<span class="badge ${VERD[v][1]}">${old}</span>` : v ? "" : `<span class="badge">未审</span>`}${it.x.registered ? `<span class="badge ok">已进素材区</span>` : ""}`; }
   if (it.type === "src") return `<span class="badge acc">真源 · ${esc(it.s.look || it.s.label)}</span>${it.s.text && !it.s.prompt && (it.s.look || it.s.section !== "styles") ? `<span class="badge warn">待补描述</span>` : ""}${it.s.exists ? "" : `<span class="badge bad">文件缺失</span>`}${it.s.history.length ? `<span class="badge">历史 ${it.s.history.length}</span>` : ""}`;
   if (it.type === "lib") { const [l, c] = LIB[it.e.status] || [it.e.status, ""]; return `<span class="badge">登记</span><span class="badge ${c}">${l}</span>${kfUses(it.e).length ? `<span class="badge acc" title="${esc(kfText(it.e))}">关键帧 · ${kfUses(it.e).length}</span>` : ""}`; }
-  if (it.type === "insp") return (it.i.tags || []).slice(0, 3).map(t => `<span class="badge">${esc(t)}</span>`).join("");
+  if (it.type === "insp") return `${isVideo(it.file) ? `<span class="badge acc">视频</span>` : ""}${(it.i.tags || []).slice(0, 3).map(t => `<span class="badge">${esc(t)}</span>`).join("")}`;
   return "";
 }
 function metaFor(it) {
@@ -374,13 +379,13 @@ function folderTile(ch) {
   const covers = ch.items.filter(i => i.file).slice(0, 3);
   const subs = new Set(ch.items.filter(i => i.pack.length > ch.path.split("/").length).map(i => i.pack[ch.path.split("/").length])).size;
   return `<button class="folder${ch.items.length ? "" : " is-empty"}" data-cp="${esc(ch.path)}">
-    <div class="covers"${covers.length ? ` style="grid-template-columns:repeat(${covers.length},1fr)"` : ""}>${covers.length ? covers.map(i => `<img loading="lazy" src="${img(i.file)}" alt="">`).join("") : `<span class="none">${ch.items.length ? "无图 · 文件缺失" : "空包"}</span>`}</div>
+    <div class="covers"${covers.length ? ` style="grid-template-columns:repeat(${covers.length},1fr)"` : ""}>${covers.length ? covers.map(i => isVideo(i.file) ? `<video muted preload="metadata" src="${img(i.file)}"></video>` : `<img loading="lazy" src="${img(i.file)}" alt="">`).join("") : `<span class="none">${ch.items.length ? "无图 · 文件缺失" : "空包"}</span>`}</div>
     <div class="f-info"><span class="f-name" title="${esc(ch.name)}">${esc(ch.name)}</span><span class="f-meta">${subs ? `${subs} 个子包 · ` : ""}${ch.items.length} 张</span></div></button>`;
 }
 function grid(items) {
   return `<div class="grid">${items.map((it, n) => `
     <div class="card" data-n="${n}" data-v="${it.type === "cand" ? it.x.verdict : ""}">
-      <div class="media${it.alpha ? " alpha" : ""}">${it.file ? `<img loading="lazy" src="${img(it.file)}" alt="">` : `<span class="m">无图</span>`}</div>
+      <div class="media${it.alpha ? " alpha" : ""}">${it.file ? (isVideo(it.file) ? `<video controls muted preload="metadata" playsinline src="${img(it.file)}"></video>` : `<img loading="lazy" src="${img(it.file)}" alt="">`) : `<span class="m">无图</span>`}</div>
       <div class="card-info"><div class="t" title="${esc(it.title)}">${esc(it.title)}</div><div class="row">${badgeFor(it)}</div><div class="m">${metaFor(it)}</div></div>
     </div>`).join("")}</div>`;
 }
@@ -410,7 +415,7 @@ function render() {
       <span style="width:12px"></span><span class="m" style="font-size:12px;align-self:center">键盘：↑↓←→ 选 · 回车进入 / 打开 · Esc 或 ⌫ 退一步 · S 切这排小框 · Q 平铺 · E 切区 · W 短效 / 长效 · Tab / 到头再 ← 切到左栏</span></div>`;
   }
   const all = applyFilter(zoneItems(nav.group));
-  const kids = children(all, nav.path).filter(ch => ch.items.length || !nav.path);
+  const kids = children(all, nav.path, nav.group).filter(ch => ch.items.length || !nav.path);
   const here = all.filter(it => under(it, nav.path));
   const direct = here.filter(it => pathOf(it) === nav.path);
   if (kids.length) h += `<div class="section-title">${nav.path ? "子包" : "大包"}</div><div class="folders">${kids.map(folderTile).join("")}</div>`;
@@ -422,7 +427,7 @@ function render() {
   v.innerHTML = h;
   bindCrumbs(v);
   v.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { filter = b.dataset.f; render(); });
-  v.querySelectorAll(".card").forEach(c => c.onclick = () => openAt(+c.dataset.n));
+  v.querySelectorAll(".card").forEach(c => c.onclick = e => { if (e.target.closest("video")) return; openAt(+c.dataset.n); });
   markSel(false);
   if ($("flat")) $("flat").onclick = () => { flat = !flat; render(); };
 }
@@ -452,12 +457,24 @@ function viewLog() {
 }
 
 // ---------------- detail dialog ----------------
+function stopMedia(el) {
+  if (!el) return;
+  el.pause(); el.removeAttribute("src"); el.load();
+}
 function openAt(n, keep) {
   if (!list.length) return;
   saveNote();   // 切图前把上一张没存的备注存掉
   cur = (n + list.length) % list.length; const it = list[cur]; srcMode = false;
   $("d-title").textContent = `${it.title}  (${cur + 1}/${list.length})`;
-  $("d-img").src = img(it.file); $("d-img").onclick = () => { if (it.file) { lightbox([{file: it.file, cap: it.title}], 0); lbFromDetail = true; } };
+  stopMedia($("d-vid"));
+  if (isVideo(it.file)) {
+    $("d-img").style.display = "none"; $("d-img").removeAttribute("src");
+    $("d-vid").style.display = "block"; $("d-vid").src = img(it.file);
+  } else {
+    $("d-vid").style.display = "none";
+    $("d-img").style.display = "block"; $("d-img").src = img(it.file);
+  }
+  $("d-img").onclick = () => { if (it.file) { lightbox([{file: it.file, cap: it.title}], 0); lbFromDetail = true; } };
   $("d-body").innerHTML = detailBody(it); $("d-keys").textContent = keysFor(it); bindDetail(it);
   if (!$("detail").open) $("detail").showModal();
 }
@@ -477,8 +494,7 @@ function aiFold(c, x) {
     ${sent ? `<h4 style="margin-top:8px">${x.sent_prompt ? "这张图实际发出去的提示词" : "卡片当前的提示词"}（${sent.length} 字）</h4><pre style="white-space:pre-wrap;margin-top:4px">${esc(sent)}</pre>` : ""}</details>`;
 }
 // 沉淀前先看同名真源：有就把要被换掉的那张摆出来
-// 真源种类来自 project.yaml 的 sources.kinds；默认 人物 / 道具 / 风格
-const KINDS = () => S.kinds || [{section: "characters", label: "人物", as: "character", text: false}, {section: "props", label: "道具", as: "prop", text: false}, {section: "styles", label: "风格", as: "style", text: true}];
+const KINDS = () => S.kinds;
 const kindOf = as => KINDS().find(k => k.as === as);
 const sameSource = (kind, name) => S.sources.find(s => s.section === (kindOf(kind) || {}).section && s.name === name);
 function showConflict() {
@@ -497,13 +513,24 @@ const WANTS = () => [["look", "长相", `${KINDS().filter(k => !k.text).map(k =>
   ["mood", "氛围", "光线、色调、情绪要这种感觉（存图 + 描述）"],
   ...KINDS().filter(k => k.text && k.section !== "styles").map(k => ["t:" + k.as, k.label, `以后都照这个${k.label}来（存图 + 描述）`]),
   ["comp", "构图", "这个机位和动作的写法好（存字）"]];
+const itemCard = it => it.type === "cand" ? it.card : ((it.e && S.cards.find(c => c.id === it.e.card)) || {});
+function srcBoxHtml(c) {
+  const pd = (c && c.promote) || {}, defAs = pd.look_as || "character", defName = pd.look_name || "";
+  const wantLabel = (WANTS().find(([k]) => k === pd.want) || [])[1];
+  const declared = pd.declared && wantLabel ? `<div class="m">这张卡建的时候就定好了：${esc(wantLabel)}「${esc(pd.want === "look" ? pd.look_name : pd.want === "comp" ? pd.comp : pd.want.startsWith("t:") ? pd.text[pd.want.slice(2)] : pd[pd.want])}」</div>` : "";
+  return `<div class="box" id="d-srcbox"><h4>定为真源 <span class="m" style="font-weight:400">以后出图照着它来 · 按 D 用键盘定</span></h4>
+    ${declared}<div class="m">喜欢它的什么？</div>
+    <div class="row">${WANTS().map(([k, l, tip]) => `<button class="b" data-want="${k}" title="${esc(tip)}">${l}</button>`).join("")}</div>
+    <input type="hidden" id="d-as" value="${defAs}"><input type="hidden" id="d-defname" value="${esc(defName)}">
+    <div id="d-want"></div></div>`;
+}
 function wantFields(k, it) {
   const name = $("d-defname").value, today = `用户 ${S.today} 网页确认：就这张`;
   const nm = (v, ph) => `<input id="d-name" autocomplete="off" value="${esc(v)}" placeholder="${ph}" style="flex:1">`;
   const ap = `<input id="d-approved" autocomplete="off" value="${esc(today)}" placeholder="谁 / 何时 / 原话">`;
   if (k === "look") return `<div class="row"><select id="d-kind">${KINDS().filter(t => !t.text).map(t => `<option value="${esc(t.as)}"${$("d-as").value === t.as ? " selected" : ""}>${esc(t.label)}</option>`).join("")}</select>${nm(name, "名字，如 主角/婚服")}</div>${ap}
     <div class="row"><button class="b primary" id="d-promote">确认：定为长相真源</button></div><div id="d-conflict"></div>`;
-  const pd = it.card.promote || {};
+  const pd = itemCard(it).promote || {};
   if (k === "comp") return `<div class="row">${nm(pd.comp || "", "模板名，如 城门回头")}</div>
     <textarea id="d-text" class="grow" rows="1" placeholder="这段构图 / 动作的写法（英文，可不填：自动从这张卡的环境、构图、动作摘）"></textarea>${ap}
     <div class="row"><button class="b primary" id="d-promote">确认：存成构图模板</button></div><div id="d-conflict"></div>`;
@@ -537,17 +564,13 @@ function libCand(e) {
 function keysFor(it) {
   const tail = " · 回车 大图 · Esc / ⌫ 退出";
   if (it.type === "cand") return `键盘：← → 切换 · ${it.x.verdict === "fail" ? "1 要 · 2 移回原位" : "1 要 · 3 不要"}（记完跳下一张）· 空格 跳过 · A 备注 · ⌘Z 备注换回上一版 · D 定真源${tail}`;
-  if (it.type === "lib") return `键盘：← → 切换 · 1 定稿 · 2 移回原处 · 3 丢弃 · A 备注 / 丢弃原因 · ⌘Z 备注换回上一版${tail}`;
+  if (it.type === "lib") return `键盘：← → 切换 · 1 定稿 · 2 移回原处 · 3 丢弃 · A 备注 / 丢弃原因 · ⌘Z 备注换回上一版 · D 定真源${tail}`;
   if (it.type === "src") return `键盘：← → 切换 · 2 移回素材区 · 3 丢进废稿区${tail}`;
   return `键盘：← → 切换${tail}`;
 }
 function detailBody(it) {
   if (it.type === "cand") {
     const c = it.card, x = it.x;
-    // 定真源的默认值由脚本给（pipeline.promote_defaults）：卡里写了 promote 就照它，没写按包 / 角色 / styles / 标题推
-    const pd = c.promote || {}, defAs = pd.look_as || "character", defName = pd.look_name || "";
-    const wantLabel = (WANTS().find(([k]) => k === pd.want) || [])[1];
-    const declared = pd.declared && wantLabel ? `<div class="m">这张卡建的时候就定好了：${esc(wantLabel)}「${esc(pd.want === "look" ? pd.look_name : pd.want === "comp" ? pd.comp : pd.want.startsWith("t:") ? pd.text[pd.want.slice(2)] : pd[pd.want])}」</div>` : "";
     return `<div class="row"><span class="badge ${c.kind === "sketch" ? "acc" : ""}">${{sketch: "短效 · 草图", rerender: "长效 · 重绘卡", portrait: "长效 · 人物设定卡"}[c.kind] || "长效 · 镜头卡"}</span>${packBadge(it)}<span class="badge">${esc(c.id)}</span>${badgeFor(it)}</div>
       <div class="m">${esc(x.name)} · ${esc(x.model)} · ${x.width}×${x.height}</div>
       <div class="box"><h4>这张图</h4>
@@ -555,11 +578,7 @@ function detailBody(it) {
         <div class="row"><button class="b ok${x.registered ? " on" : ""}" id="d-keep">要 → 素材区</button><button class="b bad${x.verdict === "fail" ? " on" : ""}" id="d-drop">不要 → 废稿区</button></div>
         ${x.verdict === "fail" ? `<div class="row"><button class="b" id="d-back">← 移回原位（2）</button><span class="m">回到原来的${isSketch(it) ? "试样区" : "出图区"}（同一个包），变回未审。</span></div>` : ""}
         <div class="m">拿不准就先不点，留在这里。键盘：${x.verdict === "fail" ? "1 要 · 2 移回原位" : "1 要 · 3 不要"} · 空格 跳过 · A 写备注（Esc / 回车 收起并保存；不在框里时 ⌘Z 和上一版来回换）</div></div>
-      <div class="box" id="d-srcbox"><h4>定为真源 <span class="m" style="font-weight:400">以后出图照着它来 · 按 D 用键盘定</span></h4>
-        ${declared}<div class="m">喜欢它的什么？</div>
-        <div class="row">${WANTS().map(([k, l, tip]) => `<button class="b" data-want="${k}" title="${esc(tip)}">${l}</button>`).join("")}</div>
-        <input type="hidden" id="d-as" value="${defAs}"><input type="hidden" id="d-defname" value="${esc(defName)}">
-        <div id="d-want"></div></div>
+      ${srcBoxHtml(c)}
       <details><summary class="m">更多：改归类</summary><div class="box" style="margin-top:6px">
         <input id="d-pack" list="pack-paths" value="${esc(c.pack.join("/"))}" placeholder="大包/小包/子包，如 人物/主角/氛围测试">
         <datalist id="pack-paths">${allPackPaths().map(p => `<option value="${esc(p)}">`).join("")}</datalist>
@@ -594,7 +613,8 @@ function detailBody(it) {
       <div class="box"><h4>移出素材区</h4>
         ${lx ? noteRow(lx, "备注 / 丢弃的原因（可不写）· 按 A 开始写") : ""}
         <div class="row"><button class="b" id="d-return">← 移回原处（2）</button><button class="b bad" id="d-discard">丢弃 → 废稿区（3）</button></div>
-        <div class="m">移回（键盘 2）：回到原来的${e.card && e.card.startsWith("s-") ? "试样区" : "出图区"}（同一个包），变回未审。丢弃（键盘 3）：进废稿区，上面的备注就是丢弃原因，记进卡里。</div></div>
+        <div class="m">移回（键盘 2）：回到原来的${homeOf(e.card)}（同一个包），变回未审。丢弃（键盘 3）：进废稿区，上面的备注就是丢弃原因，记进卡里。</div></div>
+      ${srcBoxHtml(itemCard(it))}
       ${e.prompt ? `<details><summary class="m">给 AI 看的 · 英文提示词（默认收起）</summary><pre style="white-space:pre-wrap;margin-top:6px">${esc(e.prompt)}</pre></details>` : ""}`;
   }
   if (it.type === "insp") {
@@ -604,6 +624,25 @@ function detailBody(it) {
       <div class="m">试样时用 <code>--ref ${esc(i.id)}</code></div>`;
   }
   return "";
+}
+function bindSrcBox(q, it, candName) {
+  q("[data-want]").forEach(b => b.onclick = () => {
+    q("[data-want]").forEach(x => x.classList.toggle("on", x === b));
+    const k = b.dataset.want;
+    $("d-want").innerHTML = wantFields(k, it);
+    if (k === "look") { $("d-as").value = $("d-kind").value; $("d-kind").onchange = () => { $("d-as").value = $("d-kind").value; showConflict(); }; }
+    else $("d-as").value = k === "comp" ? "template" : k.startsWith("t:") ? k.slice(2) : "style";
+    $("d-name").oninput = showConflict; showConflict();
+    // sure：键盘那边已经确认过（含替换提醒），不再问一次
+    $("d-promote").onclick = $("d-promote")._go = sure => {
+      const kind = $("d-as").value, name = $("d-name").value.trim(), approved = $("d-approved").value.trim();
+      const text = $("d-text") ? $("d-text").value.trim() : "";
+      if (!name || !approved) { toast("名字和批准说明都要填", true); return; }
+      if (sure !== true && kind !== "template" && sameSource(kind, name) && !confirm(`「${name}」已经有真源了，确定用这张替换吗？旧的那张会进历史。`)) return;
+      post("/api/promote", {candidate: candName, as: `${kind}:${kind === "template" ? "沉淀/" + name : name}`, approved,
+        text, look: k === "paint" ? "画风" : k === "mood" ? "氛围" : ""});
+    };
+  });
 }
 function bindDetail(it) {
   const q = s => $("d-body").querySelectorAll(s);
@@ -618,23 +657,7 @@ function bindDetail(it) {
       if (pack.split("/").filter(Boolean).length < 2) { toast("至少写到小包：大包/小包", true); return; }
       post("/api/pack", {card: it.card.id, pack});
     };
-    q("[data-want]").forEach(b => b.onclick = () => {
-      q("[data-want]").forEach(x => x.classList.toggle("on", x === b));
-      const k = b.dataset.want;
-      $("d-want").innerHTML = wantFields(k, it);
-      if (k === "look") { $("d-as").value = $("d-kind").value; $("d-kind").onchange = () => { $("d-as").value = $("d-kind").value; showConflict(); }; }
-      else $("d-as").value = k === "comp" ? "template" : k.startsWith("t:") ? k.slice(2) : "style";
-      $("d-name").oninput = showConflict; showConflict();
-      // sure：键盘那边已经确认过（含替换提醒），不再问一次
-      $("d-promote").onclick = $("d-promote")._go = sure => {
-        const kind = $("d-as").value, name = $("d-name").value.trim(), approved = $("d-approved").value.trim();
-        const text = $("d-text") ? $("d-text").value.trim() : "";
-        if (!name || !approved) { toast("名字和批准说明都要填", true); return; }
-        if (sure !== true && kind !== "template" && sameSource(kind, name) && !confirm(`「${name}」已经有真源了，确定用这张替换吗？旧的那张会进历史。`)) return;
-        post("/api/promote", {candidate: it.x.name, as: `${kind}:${kind === "template" ? "沉淀/" + name : name}`, approved,
-          text, look: k === "paint" ? "画风" : k === "mood" ? "氛围" : ""});
-      };
-    });
+    bindSrcBox(q, it, it.x.name);
   }
   if (it.type === "src") { $("d-demote").onclick = moveBack; $("d-srcdrop").onclick = dropIt; }
   if (it.type === "src" && $("d-desc-undo")) $("d-desc-undo").onclick = () => { $("d-desc").value = descBefore(it.s); toast("填回了改之前的描述，确认没问题再点「保存描述」"); };
@@ -652,6 +675,7 @@ function bindDetail(it) {
   });
   if (it.type === "lib") {
     const lx = libCand(it.e); if (lx) bindNote({card: {id: it.e.card}, x: lx});
+    bindSrcBox(q, it, it.e.candidate || it.e.file);
     $("d-return").onclick = moveBack;
     $("d-discard").onclick = dropIt;
   }
@@ -662,11 +686,19 @@ let lbShots = [], lbAt = 0, lbFromDetail = false;   // 从详情点开的大图�
 function lightbox(shots, n) {
   if (!shots.length) return;
   lbShots = shots; lbAt = (n + shots.length) % shots.length;
-  $("lb-img").src = img(shots[lbAt].file);
-  $("lb-cap").textContent = `${shots[lbAt].cap || ""}${shots.length > 1 ? `  (${lbAt + 1}/${shots.length}) · ← → 切换` : ""} · 点图片外任意处或 Esc 退出`;
+  const f = shots[lbAt].file;
+  stopMedia($("lb-vid"));
+  if (isVideo(f)) {
+    $("lb-img").style.display = "none"; $("lb-img").removeAttribute("src");
+    $("lb-vid").style.display = "block"; $("lb-vid").src = img(f);
+  } else {
+    $("lb-vid").style.display = "none";
+    $("lb-img").style.display = "block"; $("lb-img").src = img(f);
+  }
+  $("lb-cap").textContent = `${shots[lbAt].cap || ""}${shots.length > 1 ? `  (${lbAt + 1}/${shots.length}) · ← → 切换` : ""} · 点外面或 Esc 退出`;
   if (!$("lb").open) $("lb").showModal();   // dialog 进顶层，详情框开着时也能盖在它上面
 }
-$("lb").onclick = e => { if (e.target !== $("lb-img")) $("lb").close(); };
+$("lb").onclick = e => { if (e.target !== $("lb-img") && e.target !== $("lb-vid")) $("lb").close(); };
 // ---------------- 键盘 ----------------
 // 键盘分两块，同一时间只有一块响应方向键（亮框的那块）：鼠标移到哪块就是哪块，Tab 也能切。
 // 右边网格：页签 / 筛选小框（图 · 字 · 记录，全部 · 未审 …）、文件夹、图排成一串，↑↓←→ 移动选中框（鼠标停在哪个上也选中它），
@@ -869,7 +901,7 @@ function setSrcMode(on) {
   if (box) box.classList.toggle("kb", srcMode);
   $("d-keys").textContent = srcMode ? "定真源：← → / S 切喜欢什么 · A 写描述（长相是名字）· 回车 确认（弹框再回车定下）· 1 / 2 / 3 暂停 · D / Esc / ⌫ 退出" : keysFor(list[cur]);
   if (!srcMode) return;
-  const want = (list[cur].card.promote || {}).want;   // 没选过：落在卡里定好的那个（没写就是长相）
+  const want = (itemCard(list[cur]).promote || {}).want;   // 没选过：落在卡里定好的那个（没写就是长相）
   if (!box.querySelector("[data-want].on")) (box.querySelector(`[data-want="${want}"]`) || box.querySelector("[data-want]")).click();
   box.scrollIntoView({block: "nearest"});
 }
@@ -885,8 +917,8 @@ function promoteByKey() {
   const replace = kind !== "template" && sameSource(kind, name);
   if (confirm(`${b.textContent.replace("确认：", "")}「${name}」？${replace ? "\n已经有同名真源，旧的那张会进历史。" : ""}`)) b._go(true);
 }
-$("lb").addEventListener("close", () => { lbFromDetail = false; });
-$("detail").addEventListener("close", () => { saveNote(); sel = $("view").querySelectorAll(".folder").length + cur; markSel(true); });
+$("lb").addEventListener("close", () => { stopMedia($("lb-vid")); lbFromDetail = false; });
+$("detail").addEventListener("close", () => { stopMedia($("d-vid")); saveNote(); sel = $("view").querySelectorAll(".folder").length + cur; markSel(true); });
 document.addEventListener("keydown", e => {
   // 详情里的框（备注、定真源、描述、批准说明、改归类……）：Esc 只收起框、不关详情（备注顺带保存；输入法正在拼字时不算）。
   // 回车也收起的只有备注框和定真源那块（描述框里回车照常换行）
@@ -934,7 +966,7 @@ document.addEventListener("keydown", e => {
   } else if (inDetail) {
     const step = d => { openAt(cur + d); if (inLb) lightbox([{file: list[cur].file, cap: list[cur].title}], 0); };
     if ((k === "d" || k === "D") && !inLb) {
-      if (e.repeat) {} else if ($("d-srcbox")) setSrcMode(!srcMode); else toast("只有出图区 / 试样区 / 废稿区的图能定真源");
+      if (e.repeat) {} else if ($("d-srcbox")) setSrcMode(!srcMode); else toast("只有出图区 / 试样区 / 素材区 / 废稿区的图能定真源");
     }
     else if (srcMode && !inLb && (k === "s" || k === "S")) { if (!e.repeat) nextWant(e.shiftKey ? -1 : 1); }
     else if (srcMode && !inLb && (k === "ArrowLeft" || k === "ArrowRight")) nextWant(k === "ArrowLeft" ? -1 : 1);   // 模式里 ←→ 也是切喜欢什么，不换图
@@ -946,7 +978,7 @@ document.addEventListener("keydown", e => {
     else if ((k === "a" || k === "A") && !inLb && $("d-note")) { const b = $("d-note"); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }
     else if (k === " ") step(1);
     // 回车由这里接管：不然会去「点」弹窗里拿着焦点的按钮（打开时是「上一项」，鼠标点过的是那个按钮），看起来像乱切图
-    else if (k === "Enter") { if (!inLb) $("d-img").click(); }   // 回车进一层：详情 → 全屏大图；大图里不动
+    else if (k === "Enter") { if (!inLb && list[cur]?.file) { lightbox([{file: list[cur].file, cap: list[cur].title}], 0); lbFromDetail = true; } }   // 回车进一层：详情 → 全屏看图/播片；全屏里不动
     else return;
   } else if (!inLb && k === "Tab") {   // 切到左栏时框落在当前所在的那一项上
     if (zone === "main") navToActive(); else { zone = "main"; markSel(true); }

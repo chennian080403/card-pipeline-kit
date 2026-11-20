@@ -8,16 +8,17 @@ import shlex
 import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import media
 import providers
 import refs as refmod
 import stations
-from cards import card_fingerprint, collect_refs, compose_prompt, load_card, pick_mode, save_card, validate
+from cards import card_fingerprint, collect_refs, compose_prompt, load_card, pick_mode, save_card, validate, v2_card_problems
 from common import die, now
 from config import SKILL_ROOT
-from core import jobs, jsonio
+from core import jobs, jsonio, naming
 from store import (_refs_record, job_key, load_manifest, load_take, manifest_path, save_manifest, save_take,
                    take_meta_path, take_name, update_job, update_manifest)
 
@@ -32,6 +33,18 @@ def _free_take_name(cfg, name):
     return candidate
 
 
+def _reserve_take(cfg, card, model, manifest):
+    card_id = card["id"]
+    seq = max(naming.next_seq(manifest["jobs"], card_id, model),
+              naming.next_seq(manifest.get("forgotten", ()), card_id, model),
+              naming.next_seq((p.with_suffix(".mp4") for p in cfg.takes_dir.glob("*") if p.suffix in {".json", ".mp4"}),
+                              card_id, model))
+    name = take_name(card_id, model, seq, v2=True, policy=cfg.naming_policy,
+                     legacy_card=card.get("schema_version") != 2)
+    return {"card_id": card_id, "naming_version": 2, "canonical_model": naming.name_key(model),
+            "seq": seq, "media_name": name + ".mp4"}
+
+
 def finalize_take(cfg, key, info, card, *, post=()):
     """A provider said ok: put the file in takes/, describe it, sheet it, hand it to the station.
 
@@ -44,7 +57,7 @@ def finalize_take(cfg, key, info, card, *, post=()):
         print(f"  · {key} is no longer in the manifest (forgotten meanwhile?): nothing saved")
         return None
     cfg.takes_dir.mkdir(parents=True, exist_ok=True)
-    base = take_name(card["id"], job["model"], job["n"])
+    base = Path(job["media_name"]).stem if job.get("media_name") else take_name(card["id"], job["model"], job["n"])
     staged = cfg.takes_dir / f".{base}.{os.getpid()}.part"
     try:
         if info.get("url"):
@@ -63,11 +76,16 @@ def finalize_take(cfg, key, info, card, *, post=()):
             if job.get("state") not in ("submitted", "waiting_import"):
                 print(f"  · {key} is already {job.get('state') or 'gone'} (another run finished it): this copy dropped")
                 return None
-            name = _free_take_name(cfg, base)
+            name = base if job.get("naming_version") == 2 else _free_take_name(cfg, base)
             if name != base:
                 print(f"  ! {base}.mp4 already exists: this take is saved as {name} (nothing overwritten)")
             out = cfg.takes_dir / f"{name}.mp4"
-            os.replace(staged, out)
+            if job.get("naming_version") == 2:
+                if take_meta_path(cfg, name).exists():
+                    die(f"take metadata already exists: {name}")
+                os.link(staged, out)
+            else:
+                os.replace(staged, out)
             meta = {
                 "name": name, "file": str(out), "card": card["id"], "title": card.get("title", ""),
                 "group": card.get("group", ""), "model": job["model"], "provider": job["provider"],
@@ -75,6 +93,8 @@ def finalize_take(cfg, key, info, card, *, post=()):
                 "card_fingerprint": job.get("card_fingerprint"), "probe": probe, "sha256": digest,
                 "run_dir": job.get("run_dir"), "at": now(), "derived_from": None, "sheet": None,
             }
+            if job.get("naming_version") == 2:
+                meta.update({field: job[field] for field in ("card_id", "canonical_model", "naming_version", "seq")}, job_key=key)
             save_take(cfg, meta)
             job.update(state="ok", take=name, finished_at=now())
             job.pop("error", None)
@@ -172,12 +192,14 @@ def _approval(cfg, provider, alias, args):
         die(f"{alias}: {error}")
 
 
-def _claim(cfg, key, record):
+def _claim(cfg, key, record, card, model):
     """Under the manifest lock: re-read the slot and, if it is still free to submit, write the record
     as state=submitting before anything is sent. Returns the step that stopped us, or None when claimed."""
     def change(manifest):
         step = jobs.next_step(manifest["jobs"].get(key))
         if step == "submit":
+            if model:
+                record.update(_reserve_take(cfg, card, model, manifest))
             manifest["jobs"][key] = dict(record, state="submitting")
             return None
         return step
@@ -194,6 +216,10 @@ def cmd_generate(cfg, args):
         if problems:
             die(f"{card_id} does not validate on {alias}: {problems}")
         spec = cfg.model_spec(alias)
+        model = naming.resolve_model(alias, cfg.vocab, "video") if cfg.v2(card) else None
+        if model:
+            take_name(card["id"], model, 1, v2=True, policy=cfg.naming_policy,
+                      legacy_card=card.get("schema_version") != 2)
         provider = providers.make(spec, cfg)
         approval = _approval(cfg, provider, alias, args)
         budget = args.budget or int(card.get("takes") or 1)
@@ -222,7 +248,8 @@ def cmd_generate(cfg, args):
                 wait = gap - (time.time() - last_submit)
                 print(f"  free tier pacing: waiting {wait:.0f}s")
                 time.sleep(wait)
-            run_dir = _new_run_dir(cfg, f"{card_id}-{alias}-{n}-{time.strftime('%Y%m%d-%H%M%S')}")
+            run_dir = _new_run_dir(cfg, f"{naming.normalize_name(card_id)}-{uuid.uuid4().hex}" if model
+                                   else f"{card_id}-{alias}-{n}-{time.strftime('%Y%m%d-%H%M%S')}")
             job_input = {"card": {k: v for k, v in card.items() if not k.startswith("_")}, "n": n, "row": row,
                          "prompt": prompt, "mode": mode, "refs": refs, "run_dir": str(run_dir),
                          "duration": card.get("duration", 5), "aspect": str(card.get("aspect", "16:9")),
@@ -233,7 +260,7 @@ def cmd_generate(cfg, args):
                       "prompt": prompt, "refs": _refs_record(refs),
                       "card_fingerprint": card_fingerprint(card, cfg), "run_dir": str(run_dir), "submitted_at": now(),
                       "approval": approval}
-            taken = _claim(cfg, key, record)
+            taken = _claim(cfg, key, record, card, model)
             if taken:                      # another session took this slot between our read and the lock
                 shutil.rmtree(run_dir, ignore_errors=True)
                 print(f"  #{n} taken by another run meanwhile ({taken}): not submitted")
@@ -337,17 +364,36 @@ def _import_slot(cfg, card, alias_given):
     """Which job an import closes: --model X -> X's oldest waiting_import job; no --model -> the card's
     only waiting_import job (several -> the human picks with --model); none -> a new take."""
     manifest = load_manifest(cfg)
+    controlled = naming.has_model_vocab(cfg.vocab, "video")
+    canonical = naming.resolve_model(alias_given, cfg.vocab, "video") if alias_given and cfg.v2(card) else None
+    def matches(job):
+        if not alias_given or job["model"] == alias_given:
+            return True
+        if not canonical:
+            return False
+        try:
+            return canonical == (job.get("canonical_model") or naming.resolve_model(job["model"], cfg.vocab, "video"))
+        except naming.NamingError:
+            return False
+
     waiting = sorted((j["n"], k, j["model"]) for k, j in manifest["jobs"].items()
-                     if j["card"] == card["id"] and j.get("state") == "waiting_import"
-                     and (not alias_given or j["model"] == alias_given))
+                     if j["card"] == card["id"] and j.get("state") == "waiting_import" and matches(j))
     if alias_given:
-        return alias_given, (waiting[0][1] if waiting else None)
+        exact = [item for item in waiting if item[2] == alias_given]
+        if exact:
+            waiting = exact
+        elif len({item[2] for item in waiting}) > 1:
+            routes = ", ".join(sorted({item[2] for item in waiting}))
+            die(f"{card['id']}: model {alias_given!r} matches several waiting routes ({routes}); give the route with --model")
+        return (waiting[0][2], waiting[0][1]) if waiting else (alias_given, None)
     models = sorted({m for _, _, m in waiting})
     if len(models) > 1 or len(waiting) > 1:
         die(f"{card['id']} has {len(waiting)} handoff jobs waiting ({', '.join(k for _, k, _ in waiting)}): "
             f"say which with --model")
     if waiting:
         return waiting[0][2], waiting[0][1]
+    if controlled:
+        die(f"{card['id']}: no handoff job is waiting; --model is required and must be in the model vocabulary")
     return card.get("model") or cfg.default_model(), None
 
 
@@ -357,6 +403,9 @@ def cmd_import(cfg, args):
     The source file is copied and left where it is (--move deletes it after a good import);
     files inside the project's output folder are refused (they belong to the pipeline already)."""
     card = load_card(cfg, args.card)
+    problems = v2_card_problems(cfg, card)
+    if problems:
+        die("; ".join(problems))
     src = Path(args.file).expanduser()
     if not src.is_file():
         die(f"no such file {src}")
@@ -364,6 +413,7 @@ def cmd_import(cfg, args):
     if output == src.resolve() or output in src.resolve().parents:
         die(f"{src} is inside the output folder {cfg.output_dir}: import a downloaded copy from elsewhere")
     alias, key = _import_slot(cfg, card, args.model)
+    model = naming.resolve_model(alias or "import", cfg.vocab, "video") if cfg.v2(card) else None
     created = key is None
     if created:
         refs, _ = collect_refs(cfg, card, strict_final=False)
@@ -375,10 +425,20 @@ def cmd_import(cfg, args):
         def add(manifest):           # number picked under the lock: two imports never share one
             used = [j["n"] for j in manifest["jobs"].values() if j["card"] == card["id"] and j["model"] == alias]
             n = max(used, default=0) + 1
-            manifest["jobs"][job_key(card["id"], alias, n)] = dict(record, n=n)
-            return job_key(card["id"], alias, n)
+            fields = _reserve_take(cfg, card, model, manifest) if model else {}
+            key = job_key(card["id"], f"import:{fields['canonical_model']}", fields["seq"]) if fields else job_key(card["id"], alias, n)
+            manifest["jobs"][key] = {**record, **fields, "n": n}
+            return key
         key = update_manifest(cfg, add)
-    job = update_job(cfg, key, imported_from=str(src))
+    def mark(manifest):
+        job = manifest["jobs"].get(key)
+        if not job or job.get("state") != "waiting_import":
+            die(f"{key} is no longer waiting for import")
+        if model and not job.get("naming_version"):
+            job.update(_reserve_take(cfg, card, model, manifest))
+        job["imported_from"] = str(src)
+        return dict(job)
+    job = update_manifest(cfg, mark)
     try:
         meta = finalize_take(cfg, key, {"path": str(src), "mode": job.get("mode")}, card, post=args.post or ())
     except BaseException:

@@ -21,6 +21,7 @@ import contextlib
 import io
 import json
 import mimetypes
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -85,10 +86,50 @@ class Handler(BaseHTTPRequestHandler):
             if root not in path.parents or not path.is_file():
                 return self.send(404, {"error": "not found"})
             mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            if not mime.startswith("image/"):
-                return self.send(403, {"error": "images only"})
-            return self.send(200, path.read_bytes(), mime)
+            if not (mime.startswith("image/") or mime.startswith("video/")):
+                return self.send(403, {"error": "images or videos only"})
+            return self.send_file(path, mime)
         return self.send(404, {"error": "not found"})
+
+    def send_file(self, path, mime):
+        size = path.stat().st_size
+        start, end = 0, max(size - 1, 0)
+        match = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+        if match and size > 0:
+            if match[1]:
+                start = int(match[1])
+                end = int(match[2]) if match[2] else size - 1
+            elif match[2]:
+                start = max(size - int(match[2]), 0)
+            end = min(end, size - 1)
+            if start > end or start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1 if size > 0 else 0))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if size == 0:
+            return
+        with path.open("rb") as handle:
+            handle.seek(start)
+            remaining = end - start + 1
+            try:
+                while remaining > 0:
+                    chunk = handle.read(min(1 << 16, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     def _local_request(self):
         """写接口只认本机页面：Host 必须是 127.0.0.1 / localhost（挡 DNS 重绑定），带了 Origin 也得是它们

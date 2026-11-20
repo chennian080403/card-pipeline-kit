@@ -71,6 +71,16 @@ image_host:
 packs:
   categories: [人物, 道具, 场景, 风格, 测试]
 
+# 参考区（inspiration）：只收用户明确点名收录的审美参考，不装过程产物。
+# inspire add 必须显式 --pack <大类>/<子组>（至少两级）、--approved "<用户原话>"。
+# categories：参考区专用白名单，未配置时回退默认 人物/道具/场景/风格（不含 测试）；
+#             与上面 packs.categories 互不影响，其余区仍用 packs.categories。
+# reject_dirs：这些受管目录里的文件一律拒收（Path.resolve() 解析软链后比对）；
+#              路径段含 评测 / upscale / 超分 / verify 的也拒收。
+# inspiration:
+#   categories: [人物, 道具, 场景, 风格]
+#   reject_dirs: [output/candidates, output/variants, output/runs, output/评测]
+
 # 和视频联动（可选，生态契约 §5.1）：视频的 project.yaml 是另一份时写这里，素材区就会标出哪些图正被视频卡当关键帧。
 # 两边共用同一份 project.yaml（带 video: 段）时不用写。
 # link:

@@ -28,6 +28,7 @@ import urllib.request
 from pathlib import Path
 
 import fileio
+from core import naming
 
 
 class LibraryError(RuntimeError):
@@ -74,10 +75,17 @@ def _local_save(spec, index):
 def _free_target(folder, name, digest):
     """Where a new copy goes: the plain name, or ``<sha8>_<name>`` when another file already holds the name
     (same rule as card-core: a same-named image with other content never overwrites the one already there)."""
-    target = folder / name
-    if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() != digest:
-        target = folder / f"{digest[:8]}_{name}"
-    return target
+    existing = {naming.name_key(path.name): path for path in folder.iterdir()}
+    attempt = 0
+    while True:
+        suffix = f"-{attempt}" if attempt > 1 else ""
+        filename = name if not attempt else f"{digest[:8]}{suffix}_{name}"
+        previous = existing.get(naming.name_key(filename))
+        if previous is None:
+            return folder / filename
+        if previous.name == filename and previous.is_file() and hashlib.sha256(previous.read_bytes()).hexdigest() == digest:
+            return previous
+        attempt += 1
 
 
 def _local_ingest(spec, **fields):
@@ -86,31 +94,56 @@ def _local_ingest(spec, **fields):
         return _local_ingest_locked(spec, **fields)
 
 
-def _local_ingest_locked(spec, *, title, files, prompt, model, batch):
+def _local_ingest_locked(spec, *, title, files, prompt, model, batch, card_id=None, candidate_name=None,
+                         job_key=None, category_id=None, storage_category=None, pack_name=None, naming_version=None):
     import shutil
     import time
 
     root = Path(spec["root"]).expanduser()
     index = local_load(spec)
-    known = {entry["sha256"]: entry for entry in index["entries"]}
+    def identity(entry):
+        if naming_version == 2:
+            return entry["sha256"], entry.get("card_id"), entry.get("candidate_name")
+        return entry["sha256"]
+
+    known = {identity(entry): entry for entry in index["entries"]}
+    provenance = {key: value for key, value in dict(
+        card_id=card_id, candidate_name=candidate_name, job_key=job_key, category_id=category_id,
+        storage_category=storage_category, pack_name=pack_name, naming_version=naming_version).items()
+                  if value is not None}
+    if storage_category and pack_name:
+        for part in (storage_category, pack_name):
+            if part in {".", ".."} or any(c in part for c in "/\\\x00"):
+                raise LibraryError(f"invalid library directory component: {part!r}")
+        folder = root / "草稿区" / storage_category / pack_name
+        if any(path.is_symlink() for path in (folder, folder.parent, folder.parent.parent)):
+            raise LibraryError(f"library draft path contains a symbolic link: {folder}")
+    else:
+        folder = root / "草稿区" / (batch or "card-pipeline")
     added, existing = [], []
     for item in files:
         source = Path(item)
         source = source if source.is_absolute() else root / source
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        if digest in known:
-            existing.append(known[digest]["id"])
+        key = identity({"sha256": digest, **provenance})
+        if key in known:
+            existing.append(known[key]["id"])
             continue
-        folder = root / "草稿区" / (batch or "card-pipeline")
         folder.mkdir(parents=True, exist_ok=True)
         target = _free_target(folder, source.name, digest)
         shutil.copy2(source, target)
-        entry = {"id": digest[:8], "title": (title or "generated")[:80], "batch": batch or "card-pipeline",
+        taken_ids = {entry["id"] for entry in index["entries"]}
+        entry_id = digest[:8]
+        for n in range(1, len(taken_ids) + 1):
+            if entry_id not in taken_ids:
+                break
+            entry_id = f"{digest[:8]}-{n}"
+        entry = {"id": entry_id, "title": (title or "generated")[:80], "batch": batch or "card-pipeline",
                  "file": str(target.relative_to(root)), "sha256": digest, "prompt": prompt,
                  "model": model, "status": "draft", "production_approved": False,
-                 "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "decisions": []}
+                 "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "decisions": [], **provenance}
         index["entries"].append(entry)
-        known[digest] = entry
+        known[key] = entry
         added.append(entry["id"])
     _local_save(spec, index)
     return {"ok": True, "kind": "local", "added": added, "already": existing, "root": str(root)}
@@ -184,15 +217,19 @@ def catalog_token(spec, timeout=20):
         return json.loads(response.read().decode()).get("token")
 
 
-def ingest(spec, *, title, files, prompt="", model=None, operation_id=None, batch=None, extra=None, timeout=30):
+def ingest(spec, *, title, files, prompt="", model=None, operation_id=None, batch=None, extra=None, timeout=30,
+           card_id=None, candidate_name=None, job_key=None, category_id=None, storage_category=None, pack_name=None,
+           naming_version=None):
     """Register a finished image. ``files`` is a list of paths relative to the library root.
 
     Returns the library's JSON reply. Raises LibraryError on any non-2xx.
     """
     if not enabled(spec):
         raise LibraryError("no library configured")
+    fields = dict(card_id=card_id, candidate_name=candidate_name, job_key=job_key, category_id=category_id,
+                  storage_category=storage_category, pack_name=pack_name, naming_version=naming_version)
     if spec.get("kind") == "local":
-        return _local_ingest(spec, title=title, files=files, prompt=prompt, model=model, batch=batch)
+        return _local_ingest(spec, title=title, files=files, prompt=prompt, model=model, batch=batch, **fields)
     root = Path(spec["root"]).expanduser() if spec.get("root") else None
     entries = []
     for item in files:
@@ -213,6 +250,7 @@ def ingest(spec, *, title, files, prompt="", model=None, operation_id=None, batc
     }
     if extra:
         body.update(extra)
+    body.update({k: v for k, v in fields.items() if v is not None})
     headers = _headers(spec)
     if spec.get("token_env") is None or not os.getenv(spec["token_env"]):
         token = catalog_token(spec)

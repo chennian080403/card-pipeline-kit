@@ -39,7 +39,7 @@ PL="python3 $SKILL/scripts/pipeline.py --config ./project.yaml"
 
 | 环节 | 谁做 | 怎么分 |
 |---|---|---|
-| 找素材 `inspire add` | 人 / 文字助手 | 人给图或说方向；按方向批量搜集、入库交文字助手，去重由脚本做 |
+| 找素材 `inspire add` | 人 / 文字助手 | 只收用户**点名收录**的审美参考，`--pack` 与 `--approved` 都由人给定；文字助手按方向批量搜集时可先把图放临时目录供人挑，挑中的才入库；超分对比、模型评测、模板试跑图一律不进参考区 |
 | 给素材打标签、写描述 | 看图助手 | 量大时交看图助手，主模型抽查 |
 | 挑参考 | 主模型 → 人 | 主模型看图挑出几张并说理由，人点头 |
 | 写灵感段 `--idea` | 主模型 | 要看着参考写英文画面描述 |
@@ -100,7 +100,7 @@ python3 $SKILL/scripts/selfcheck.py        # 临时目录 + mock，从 init 跑�
 
 ```bash
 # 短效
-$PL inspire add ~/Downloads/a.png --note "老板发的参考" --tag 人物
+$PL inspire add ~/Downloads/a.png --pack 风格/雪 --approved "用户：这张收进参考区" --note "老板发的参考" --tag 雪
 $PL sketch 女主 --idea "A young swordswoman in red, calm gaze" --ref <灵感id> --budget 2 --approved "用户 …"
 $PL sheet s-女主
 $PL promote s-女主_main_1 --as character:女主 --approved "用户：就这张" [--face face.png]
@@ -133,6 +133,10 @@ $PL keep     01-01 01-01_main_1 --by human
 
 ## 分类：卡型 + 资产包
 
+新项目 `init` 会创建 `vocab.yaml` 并由 `project.yaml` 引用。词表统一定义显示名、历史别名、参考区白名单、真源种类和规范模型短码。新卡用 `<卡ID>.yaml`（`schema_version: 2`）；新候选用 `<卡ID>__<模型短码>__<三位序号>[_<特征>].png`。受控词表启用时，`import` 必须给 `--model`，可选 `--feature`（也可写 `--tag`）。无词表的旧项目照常运行。
+
+用 `index` 写项目台账，用 `check` 只读检查分类、命名、重名与断链，用 `find <词...>` 查文件、卡或模型。旧记录问题仅提示，v2 违规退出 2。
+
 **卡型**（`kind`）：默认场景卡；`rerender` 重绘卡（拿一张图只改一处：`base` + `keep` + `change`）；`portrait` 人物设定卡（单人全身、默认透明底，常用来出真源）；`sketch` 草图卡（短效，`sketch` 命令生成）。见 card-schema.md。
 
 **资产包**：所有区共用一棵树 `大包/小包/子包`，图只落在叶子包。只归类、不搬文件。
@@ -141,7 +145,7 @@ $PL keep     01-01 01-01_main_1 --by human
 - 卡写 `pack: 人物/主角/氛围测试`；不写则推断：有角色 → `人物/<角色>/<group>`，有道具 → `道具/<道具>/<group>`，否则 `测试/<group>`。`pack` 不进指纹。
 - **真源一个名字只认一张**。同一人物的不同造型各算一个真源：`主角/婚服`、`主角/便装`，卡里写 `characters: [{name: 主角, lookup: 主角/婚服}]`；道具同理 `主角/剑`。真源落在 `人物/<名>/长相`、`道具/<名>/长相`、`风格/<名字前缀>`，条目写 `pack:` 可覆盖。
 - **真源种类在配置里加**：`project.yaml` 写 `sources: {kinds: {scenes: {label: 场景, as: scene}}}`，就多一节「场景」真源：卡里 `scenes: [城门]`，`promote --as scene:城门`，审核页「长相」下拉多出「场景」；加 `text: true` 的种类带描述（像画风），页面多一个按钮。默认三种不能删；从配置里拿掉的种类，已登记的条目照样显示。
-- 灵感落 `风格/<第一个标签>`，`--pack` 可指定。不通过的候选显示在废稿区的同一路径。
+- 灵感（参考区）只收**人点名收录的具体图**，落 `<大类>/<子组>`：`--pack` 必填且顶层大类在参考区白名单（默认 `人物 / 道具 / 场景 / 风格`，可在 `inspiration.categories` 改，不含 `测试`）；`--approved` 写用户明确收录的原话，存进索引留痕。拿本地图当本次参考输入（`sketch --ref` / 卡里的 `refs.files`）**不等于**收进参考区。超分对比（原图 / 2K / 4K）、模型评测、模板试跑图放 `output/` 下的独立评测目录配对比页，不进参考索引、候选清单或素材库；受管目录（`output/candidates`、`output/variants`、`output/runs`、`output/评测`）和路径段含 `评测` / `upscale` / `超分` / `verify` 的文件即使带 `--approved` 也被拒。历史条目没写 `pack` 的照旧按 `风格/<第一个标签>` 展示。不通过的候选显示在废稿区的同一路径。
 
 ## 审核页（人出现的地方）
 
@@ -187,6 +191,8 @@ python3 $SKILL/scripts/review_web.py --config ./project.yaml --port 8860
 | `validate <卡>` | 字段、真源、hold、未填变量；缺字段、引用没登记的真源、找不到参考图都报 PROBLEM（`generate` 前会自动再查一遍，有 PROBLEM 拒跑） |
 | `compose <卡> [--var N=V]` | 拼提示词落盘 + 记指纹 + 报字数 |
 | `generate <卡> --approved … [--budget N] [--model 别名]` | 调供应商、写四态 manifest、落候选 |
+| `import <卡> <本地图…> --provider <来源> [--model <模型>] [--prompt …] [--note …]` | 把外部平台生成的图正式导入已存在的卡（复制不删原件、按同卡完整内容哈希去重、独立编号、默认未审）；挂草图卡进**试样区**，挂普通卡进**出图区** |
+| `variant add <卡> <候选> <本地图> --tier 2k\|4k [--provider … --model … --replace]` / `variant list <卡> [候选]` | 给已有候选挂超分等派生版本（存 `output/variants/`，关联原候选稳定 ID），不动原候选名、审核结论、pick 顺序与视频关键帧引用 |
 | `forget <卡> <序号\|key> [--model 别名] --why …` | 人核对过（run 目录、供应商后台）确认 `unknown` 那张真没出图，清掉它好让下次重发；记录留在 manifest `forgotten` |
 | `sheet <卡>` | 候选 + 参考图条拼成预览 |
 | `keep <卡> <候选> [--note] [--by claude\|human]` | 「要」：通过 + 记进 pick + 登记素材库**草稿**，一步到位（审核页的「要」就是它） |
@@ -200,8 +206,8 @@ python3 $SKILL/scripts/review_web.py --config ./project.yaml --port 8860
 | `unreview <卡> <候选>` | 撤回结论：废稿区的图回试样区 / 出图区，变回未审（审核页废稿区按 2） |
 | `demote --as <种类>:<名> [--force] [--discard]` | 撤掉一次定真源：有历史换回上一版，没有就删掉这条（有卡在用要 `--force`）；原图回素材区，草图回试样区，`--discard` 则进废稿区；记进 `promotions.jsonl`（`action: demote`） |
 | `feedback <卡> accept\|reject\|revise --reason … [--root-cause …]` | 记反馈与归因（同一条连记两次只留一条） |
-| `inspire add <文件…> [--note --tag --pack]` / `inspire list` | 灵感区（按内容哈希去重，给 8 位 id） |
-| `sketch <名> --idea … [--ref id] [--promote 种类:名] --approved …` | 一句灵感 + 参考直接出候选（生成 `s-<名>` 草图卡）；`--promote` 写明这张草图是来定哪条真源的（`character:女主` / `"style:黄昏 @氛围"` …），审核页定真源直接停在这一项 |
+| `inspire add <文件…> --pack <大类>/<子组> --approved "<用户原话>" [--note --tag]` / `inspire list` | 参考区（按内容哈希去重，给 8 位 id）。`--pack` 必须显式且至少两级，顶层大类要在参考区白名单里（默认 `人物 / 道具 / 场景 / 风格`，不含 `测试`；项目可用 `inspiration.categories` 改）；缺 `--pack`、缺 `--approved`、或源文件在受管候选 / 评测目录里，整批拒绝且零副作用 |
+| `sketch <名> --idea … [--ref id] [--promote 种类:名] [--no-generate] --approved …` | 一句灵感 + 参考直接出候选（生成 `s-<名>` 草图卡）；加 `--no-generate`（或 `--card-only`）只建 / 更新草图卡不调生成，便于随后 `import` 外部平台试样图；`--promote` 写明这张草图是来定哪条真源的（`character:女主` / `"style:黄昏 @氛围"` …），审核页定真源直接停在这一项 |
 | `promote <候选> --as character:\|prop:\|style:\|<自加种类>:\|template:<名> --approved …` | 沉淀成真源 / 风格 / 提示词模板；种类见 `sources.kinds` |
 | `describe --as style:<名> --text "<英文描述>" --approved …` | 只改已登记画风 / 氛围（带描述种类）的描述，样张不动；`--text ""` 清空。每次改都记进 `promotions.jsonl`（谁批、改前、改后，`action: describe`）；审核页真源详情里的「保存描述」就是它 |
 | `providers` / `doctor` | 模型与凭据 / 全量自检 |

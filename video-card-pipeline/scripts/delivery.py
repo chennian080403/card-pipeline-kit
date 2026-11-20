@@ -27,7 +27,7 @@ def cmd_register(cfg, args):
     if not picks:
         die("nothing picked: sync the station or `pick` first")
     for name in picks:
-        meta = load_take(cfg, name)
+        meta = load_take(cfg, name, card["id"])
         human = (review["takes"].get(meta["name"]) or {}).get("human")
         frames = meta["refs"].get("keyframes") or [meta["refs"].get("first_frame"), meta["refs"].get("last_frame")]
         seen, lineage = set(), []
@@ -41,7 +41,7 @@ def cmd_register(cfg, args):
                  "reason": f"video take {meta['name']}" + (f"; station verdict {human.get('verdict')} by {human.get('by')}"
                                                            if human else "")}
         reply = library.ingest(cfg.library, title=f"{card['id']} {card.get('title', '')} {meta['model']}",
-                               files=[meta["file"]], prompt=meta["prompt"], model=meta["model"],
+                               files=[meta["file"]], prompt=meta["prompt"], model=meta.get("canonical_model") or meta["model"],
                                batch=card.get("group") or card["id"], extra=extra,
                                operation_id=f"video-{meta['sha256'][:16]}")
         meta["library"] = {k: reply.get(k) for k in ("added", "already", "asset_id", "existing") if k in reply}

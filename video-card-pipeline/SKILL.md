@@ -86,6 +86,10 @@ description: "卡片驱动的通用生视频流水线：一张视频卡（关键
 
 ## 单独用 / 一起用
 
+可在 `project.yaml` 加 `taxonomy: vocab.yaml` 共享分类、真源和模型词表。启用后新卡以 ID 为 YAML 文件主干并记 `schema_version: 2`，新 take 用 `<卡ID>__<模型短码>__<三位序号>.mp4` 并写同名 JSON；旧卡和 take 继续读取。受控导入若不能直接匹配唯一待收任务，就给 `--model`。
+
+用 `index` 写台账，`check` 只读检查（旧条目告警、v2 违规退出 2），`find <词...>` 搜索卡、文件或模型。
+
 | | 关键帧怎么写 | 真源 | 素材库 |
 |---|---|---|---|
 | 只用视频 | 文件路径、`source:<名>` | 自己手写 `sources.yaml` | 可选，`local` 或 `http` |

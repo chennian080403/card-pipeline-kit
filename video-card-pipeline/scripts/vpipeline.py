@@ -34,7 +34,7 @@ import refs as refmod  # noqa: E402
 import reviewing  # noqa: E402
 import stations  # noqa: E402
 from config import Config, ConfigError  # noqa: E402
-from core import jobs, versioning  # noqa: E402
+from core import catalog, jobs, naming, taxonomy, versioning  # noqa: E402
 
 # Commands that change the project. Each one saves a version before it runs (catching hand
 # edits) and after (its own result) -- only when the project folder is its own git repository
@@ -58,6 +58,7 @@ def build_parser():
         p.set_defaults(func=func)
         return p
 
+    catalog.add_commands(add)
     add("init", admin.cmd_init, "scaffold a project, or add the video section to an image project")
     p = add("new-card", admin.cmd_new_card, "new video card from the template")
     p.add_argument("card_id"); p.add_argument("title", nargs="?")
@@ -122,9 +123,12 @@ def main(argv=None):
     if writes:
         versioning.save(cfg.path.parent, f"手动改动（{args.command} 前自动存）", autosave)
     try:
+        if args.command not in {"init", "doctor"} and ("taxonomy" in cfg.raw or cfg.image_config_path()):
+            _ = cfg.kinds
         args.func(cfg, args)
     except (ConfigError, refmod.RefError, providers.ProviderError, stations.StationError,
-            library.LibraryError, media.MediaError, jobs.JobError) as error:
+            library.LibraryError, media.MediaError, jobs.JobError,
+            taxonomy.TaxonomyError, naming.NamingError) as error:
         die(str(error))
     finally:
         if writes or args.command == "init":

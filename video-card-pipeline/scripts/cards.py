@@ -11,6 +11,7 @@ import yaml
 
 import refs as refmod
 from common import die
+from core import naming, taxonomy
 from core import keyframes as keyframemod
 from core import sources as sourcekinds
 from config import ConfigError
@@ -32,7 +33,8 @@ def load_card(cfg, card_id):
         if len(hits) > 1:
             die(f"{card_id} matches several cards: {[h.name for h in hits]}")
     card = yaml.safe_load(hits[0].read_text(encoding="utf-8")) or {}
-    card.setdefault("id", card_id)
+    if card.get("schema_version") != 2:
+        card.setdefault("id", card_id)
     if card.get("act") and not card.get("group"):      # older cards call the group "act"
         card["group"] = card["act"]
     card["_path"] = hits[0]
@@ -43,7 +45,8 @@ def all_cards(cfg):
     out = []
     for path in card_files(cfg):
         card = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        card.setdefault("id", path.stem.split("_")[0])
+        if card.get("schema_version") != 2:
+            card.setdefault("id", path.stem.split("_")[0])
         card["_path"] = path
         out.append(card)
     return out
@@ -246,10 +249,27 @@ def keyframe_report(refs, spec, alias=""):
     return problems, notes
 
 
+def v2_card_problems(cfg, card):
+    if card.get("schema_version") != 2:
+        return []
+    try:
+        path = card["_path"]
+        naming.validate_card_id(card.get("id"), cfg.naming_policy, stem=path.stem)
+        naming.check_card_unique(card_files(cfg), card["id"], exclude=path)
+        if any(other["_path"] != path and naming.name_key(other.get("id")) == naming.name_key(card["id"])
+               for other in all_cards(cfg)):
+            raise naming.NamingError(f"duplicate card ID: {card['id']!r}")
+        if card.get("pack"):
+            cfg.taxonomy.validate_pack(card["pack"])
+    except (naming.NamingError, taxonomy.TaxonomyError) as error:
+        return [str(error)]
+    return []
+
+
 def validate(cfg, card, alias=None):
     """(problems, notes, refs) for this card on model ``alias`` (default: the card's model, then
     models.default) -- generate --model X validates against X, so its limits are the ones checked."""
-    problems, notes = [], []
+    problems, notes = v2_card_problems(cfg, card), []
     for key in ("id", "motion"):
         if _empty(card.get(key)) or str(card.get(key)).strip() == "...":
             problems.append(f"missing {key}")
@@ -257,7 +277,7 @@ def validate(cfg, card, alias=None):
         problems.append(f"hold: {card['hold']}")
     if card.get("mode") not in (None, "", *MODES):
         problems.append(f"mode {card['mode']!r} is not one of {' / '.join(MODES)}")
-    known = CARD_FIELDS | set(cfg.kinds)
+    known = CARD_FIELDS | set(cfg.kinds) | {"schema_version", "pack"}
     for key in card:
         if not str(key).startswith("_") and key not in known:
             close = difflib.get_close_matches(str(key), sorted(known), n=1)

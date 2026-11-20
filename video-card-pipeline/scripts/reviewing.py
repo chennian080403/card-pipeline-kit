@@ -98,7 +98,7 @@ def cmd_sync(cfg, args):
 def cmd_pick(cfg, args):
     """Pick / unpick by hand. Hand picks keep their order and are never undone by a withdrawn station verdict."""
     card = load_card(cfg, args.card)
-    names = [load_take(cfg, t)["name"] for t in args.takes]
+    names = [load_take(cfg, t, card["id"])["name"] for t in args.takes]
 
     def change(review):
         picks = list(review.get("pick") or [])

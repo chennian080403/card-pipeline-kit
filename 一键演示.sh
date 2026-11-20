@@ -33,7 +33,7 @@ if [ $have_img = 1 ]; then
   mkdir -p refs/姜澜 && cp "$KIT/演示素材/姜澜_华服.jpg" refs/姜澜/clean.jpg
   printf 'characters:\n  姜澜:\n    source: refs/姜澜/clean.jpg\n' > sources.yaml
   pl new-card 01-01 姜澜释法 >/dev/null
-  card="$(ls cards/01-01_*.yaml)"
+  card="cards/01-01.yaml"
   edit "$card" 'd.update(outfit="华服", aspect="1024x1536", characters=[{"name": "姜澜", "expression": "calm and focused"}], action="Full-body shot. She stands upright, one hand raised at chest height, releasing a spell: frost-blue light and white petals spiral out of her palm, the magic wind lifting her veil and wide sleeves.")'
   pl validate 01-01 | tail -1
   pl compose 01-01 | tail -1
@@ -45,19 +45,23 @@ if [ $have_vid = 1 ]; then
   v init >/dev/null
   if [ $have_img = 1 ]; then
     # 演示为了一路跑通，替你点一次「要」，视频首帧才有图可用。你自己的项目里「要」只能你在审核页点，AI 只提议
-    pl keep 01-01 01-01_dry_1 --by human >/dev/null
+    pl keep 01-01 01-01__dry__001 --by human >/dev/null
     echo "  （演示替你点了一次「要」；你自己的项目里只能你点）"
     first="image:01-01"
+    video_card="video-cards/01-01-video.yaml"
+    video_id="01-01-video"
   else
     command -v ffmpeg >/dev/null || { echo "✗ 缺 ffmpeg"; exit 1; }
     edit project.yaml 'd["library"] = {"kind": "local", "root": "素材库"}'
     ffmpeg -loglevel error -f lavfi -i "color=c=0x8a9bb0:s=1280x720" -frames:v 1 首帧.png
     first="首帧.png"
+    video_card="video-cards/01-01_姜澜释法.yaml"
+    video_id="01-01"
   fi
-  v new-card 01-01 姜澜释法 --first-frame "$first" >/dev/null
-  edit "$(ls video-cards/01-01_*.yaml)" 'd["motion"] = "Slow push-in; she raises her hand and the spell light swirls brighter, veil and sleeves rising in the magic wind."'
-  v validate 01-01 | head -1
-  v generate 01-01 --budget 1 --approved "演示：01-01 出 1 条" | tail -2
+  v new-card "$video_id" 姜澜释法 --first-frame "$first" >/dev/null
+  edit "$video_card" 'd["motion"] = "Slow push-in; she raises her hand and the spell light swirls brighter, veil and sleeves rising in the magic wind."'
+  v validate "$video_id" | head -1
+  v generate "$video_id" --budget 1 --approved "演示：批准出一条模拟片" | tail -2
 fi
 
 echo
@@ -70,6 +74,7 @@ if [ $have_img = 1 ]; then
   echo "▶ 出一张真的「姜澜站立释放法术」：接一个兼容 OpenAI 图片接口（/v1/images/edits）的平台"
   echo "  export IMAGE_BASE_URL=https://你的平台/v1  IMAGE_API_KEY=你的密钥"
   echo "  把 $DEMO/project.yaml 里 models 下的 main-model 换成平台的模型名，models.default 改成 main-model，然后："
+  echo "  在 vocab.yaml 的 models.image 里把 main-model 加到对应模型短码的 aliases。"
   echo "  cd \"$DEMO\" && python3 \"$IMG/scripts/pipeline.py\" --config project.yaml generate 01-01 --budget 1 --approved \"你的名字 批出 1 张\""
   echo "  别的接法（chat 接口、任意命令行）见 image-card-pipeline/references/quickstart.md"
 fi

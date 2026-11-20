@@ -33,12 +33,27 @@ class KindError(ValueError):
     pass
 
 
-def kinds(raw):
+def kinds(raw, project_root=None, taxonomy=None):
     """{section: {label, as, text, role}} -- defaults first, then the project's own, in file order."""
     out = {key: dict(value) for key, value in DEFAULT_KINDS.items()}
     declared = ((raw or {}).get("sources") or {}).get("kinds") or {}
     if not isinstance(declared, dict):
         raise KindError("sources.kinds must be a mapping {section: {label, as, text}}")
+    if "taxonomy" in (raw or {}):
+        from pathlib import Path
+        from . import taxonomy as vocab
+
+        try:
+            loaded = taxonomy if taxonomy is not None else vocab.load(raw, project_root or Path.cwd())
+            derived = loaded.to_sources_kinds()
+        except vocab.TaxonomyError as error:
+            raise KindError(str(error)) from error
+        for key, value in declared.items():
+            if (key not in derived or value is not None and not isinstance(value, dict)
+                    or any(field not in derived[key] or derived[key][field] != setting
+                           for field, setting in (value or {}).items() if setting is not None)):
+                raise KindError(f"sources.kinds conflicts with taxonomy at {key!r}; use vocab.yaml")
+        return derived
     for key, value in declared.items():
         key = str(key).strip()
         if not key or "/" in key or ":" in key:

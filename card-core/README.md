@@ -14,6 +14,7 @@
 # 2. 同步到所有接入的 Skill
 python3 card-core/sync.py
 # 3. 跑各 Skill 的自检
+python3 image-card-pipeline/scripts/selfcheck.py
 python3 video-card-pipeline/scripts/selfcheck.py
 # 随时查副本有没有走样（视频自检第 15 项也会查）
 python3 card-core/sync.py --check
@@ -44,9 +45,13 @@ python3 card-core/export.py <输出目录> [--zip]      # 出 card-pipeline-kit-
 | `jobs.py` | 任务状态机：`next_step`（skip / wait / stop / submit）、付费闸门 `approve`、`forget`（必须写原因） |
 | `station.py` | 审片协议：good / bad / discard + liked / disliked，整条或逐段；写入门禁 token + 人的署名 + revision；`aggregate` 汇总成 pass / fail / borderline |
 | `sources.py` | 真源种类：默认 人物/道具/风格，`sources.kinds` 加新种类或改名；`promote --as` 的取值、卡里字段名、带不带描述（text）都从这里来 |
+| `taxonomy.py` | 相对项目配置加载 `vocab.yaml`；解析分类、迁移、参考区白名单和真源种类 |
+| `naming.py` | 校验 v2 卡 ID 与媒体名称，归一模型别名，分配候选和 take 序号 |
+| `catalog.py` | 确定性台账、只读体检、关键词检索；可传入语义检索回调 |
 | `library.py` | 素材库 local（文件夹 + library.json，格式名沿用 `image-card-pipeline/local-library-v1`）/ http（素材库服务）；条目一律草稿 |
 
 ## 接入情况（consumers.json）
 
-- video-card-pipeline：全部模块。
-- image-card-pipeline：只用 `sources.py`；另带一份生态契约副本。
+- video-card-pipeline：使用共用模块。
+- image-card-pipeline：使用 `sources`、`keyframes`、`taxonomy`、`naming` 和 `catalog`；素材库、版本保存仍由自身模块处理。
+- 默认词表的正本是 `core/vocab.example.yaml`；同步脚本向两个 Skill 和导出模板目录发放同一份。

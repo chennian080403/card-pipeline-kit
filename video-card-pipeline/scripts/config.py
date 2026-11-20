@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from core import naming, taxonomy
 from core import sources as sourcekinds
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -96,6 +97,24 @@ class Config:
     def ffmpeg(self):
         return self.tools.get("ffmpeg") or "ffmpeg"
 
+    @property
+    def taxonomy(self):
+        if not hasattr(self, "_taxonomy"):
+            self._taxonomy = taxonomy.load(self.raw, self.path.parent)
+        return self._taxonomy
+
+    @property
+    def vocab(self):
+        return self.taxonomy.vocab
+
+    @property
+    def naming_policy(self):
+        return naming.policy_for(self.vocab, {**self.raw, "naming": {
+            **(self.raw.get("naming") or {}), **(self.video.get("naming") or {})}})
+
+    def v2(self, card=None):
+        return self.taxonomy.enabled or self.naming_policy.get("strict_v2") or (card or {}).get("schema_version") == 2
+
     # ----------------------------------------------------------------- models
     def model_aliases(self):
         return {alias: entry for alias, entry in self.models.items() if isinstance(entry, dict)}
@@ -136,12 +155,14 @@ class Config:
     def kinds(self):
         """True-source kinds (contract v1.4): ``sources.kinds`` here, else in the linked image project.yaml."""
         raw = self.raw
-        if not (raw.get("sources") or {}).get("kinds"):
+        path = self.path
+        if "taxonomy" not in raw and not (raw.get("sources") or {}).get("kinds"):
             linked = self.image_config_path()
             if linked and linked != self.path:
+                path = linked
                 raw = yaml.safe_load(linked.read_text(encoding="utf-8")) or {}
         try:
-            return sourcekinds.kinds(raw)
+            return sourcekinds.kinds(raw, path.parent, self.taxonomy if path == self.path and "taxonomy" in raw else None)
         except sourcekinds.KindError as error:
             raise ConfigError(str(error)) from error
 

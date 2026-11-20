@@ -4,6 +4,11 @@
     "image-card-pipeline"
   ],
   "docs": {
+    "card-core/core/vocab.example.yaml": [
+      "card-core/kit/vocab.example.yaml",
+      "image-card-pipeline/scripts/core/vocab.example.yaml",
+      "video-card-pipeline/scripts/core/vocab.example.yaml"
+    ],
     "video-card-pipeline/references/ecosystem-contract.md": [
       "image-card-pipeline/references/ecosystem-contract.md"
     ]

@@ -1,0 +1,78 @@
+version: 1
+locale: zh
+default_unclassified: 未归类
+default_reference: style
+categories:
+  character:
+    label: 人物
+    labels: {zh: 人物, en: Characters}
+    aliases: [角色]
+    storage: 人物
+    behavior: {reference: true, source: true}
+    source_meta: {section: characters, as: character, role: "identity, costume and look of {name}"}
+  prop:
+    label: 道具
+    labels: {zh: 道具, en: Props}
+    aliases: [武器]
+    storage: 道具
+    behavior: {reference: true, source: true}
+    source_meta: {section: props, as: prop}
+  scene:
+    label: 场景
+    labels: {zh: 场景, en: Scenes}
+    storage: 场景
+    behavior: {reference: true, source: true}
+    source_meta: {section: scenes, as: scene, role: "the environment and location of {name}"}
+  style:
+    label: 风格
+    labels: {zh: 风格, en: Styles}
+    storage: 风格
+    behavior: {reference: true, source: true, text: true}
+    source_meta:
+      section: styles
+      as: style
+      role: "lighting, color and atmosphere reference only - ignore its people, objects and location"
+  film:
+    label: 影视
+    labels: {zh: 影视, en: Shots}
+    aliases: [镜头, 名场面]
+    storage: 影视
+    behavior: {deliverable: true}
+  graphic:
+    label: 平面
+    labels: {zh: 平面, en: Graphics}
+    aliases: [海报, 口播配图]
+    storage: 平面
+    behavior: {deliverable: true}
+  eval:
+    label: 评测
+    labels: {zh: 评测, en: Benchmarks}
+    storage: 评测
+    behavior: {evaluation: true}
+migrations:
+  aliases: {武器: prop, 镜头: film, 名场面: film}
+  merge: {}
+models:
+  image:
+    gpt-img: {display: GPT Image, aliases: [gpt-image-1]}
+    flux: {display: FLUX}
+    nbpro: {display: Nano Banana Pro, aliases: [nano-banana-pro]}
+    nb21: {display: Nano Banana 2.1, aliases: [nano-banana-2.1]}
+    dry: {display: Mock, aliases: [mock]}
+  video:
+    veo: {display: Veo}
+    kling: {display: Kling}
+    h3: {display: MiniMax H3}
+    dry: {display: Mock, aliases: [mock]}
+    mixed: {display: Mixed}
+tags:
+  口播配图: [口播插图, 解说配图, b-roll]
+  海报: [宣传海报, poster]
+  封面: [缩略图, cover, thumbnail]
+  超分对比: [超分, upscale]
+naming:
+  strict_v2: true
+  card_pattern: "<主体>-<主题>.yaml"
+  media_pattern: "<卡片ID>__<模型短码>__<3位序号>[_<短特征>].<ext>"
+  max_utf8_bytes: 120
+  enforce_model_vocab: warn_legacy_error_v2

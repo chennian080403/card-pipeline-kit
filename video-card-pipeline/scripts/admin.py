@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import time
 
 import yaml
 
-from core import library
+from core import catalog, jsonio, library, naming, taxonomy
 import media
 import providers
 import refs as refmod
@@ -98,17 +99,26 @@ def cmd_init(cfg, args):
 def cmd_new_card(cfg, args):
     cfg.cards_dir.mkdir(parents=True, exist_ok=True)
     title = args.title or args.card_id
-    path = cfg.cards_dir / f"{args.card_id}_{title}.yaml"
-    if path.exists():
-        die(f"exists: {path}")
+    card_id = naming.normalize_name(args.card_id) if cfg.v2() else args.card_id
+    path = cfg.cards_dir / (f"{card_id}.yaml" if cfg.v2() else f"{card_id}_{title}.yaml")
+    scalar = lambda value: json.dumps(str(value), ensure_ascii=False)
     text = CARD_TEMPLATE.read_text(encoding="utf-8")
-    text = text.replace("id: XX-XX", f"id: {args.card_id}").replace("title: 镜头标题", f"title: {title}")
+    text = text.replace("id: XX-XX", f"id: {scalar(card_id)}").replace("title: 镜头标题", f"title: {scalar(title)}")
     text = text.replace("created: ''", f"created: '{time.strftime('%Y-%m-%d')}'")
     if args.first_frame:
-        text = text.replace("first_frame: ''", f"first_frame: '{args.first_frame}'")
+        text = text.replace("first_frame: ''", f"first_frame: {scalar(args.first_frame)}")
     if args.group:
-        text = text.replace("group: ''", f"group: '{args.group}'")
-    path.write_text(text, encoding="utf-8")
+        text = text.replace("group: ''", f"group: {scalar(args.group)}")
+    with jsonio.locked(cfg.cards_dir / "cards"):
+        if path.exists():
+            die(f"exists: {path}")
+        if cfg.v2():
+            naming.validate_card_id(card_id, cfg.naming_policy, stem=path.stem)
+            naming.check_card_unique(card_files(cfg), card_id)
+            if any(naming.name_key(card.get("id")) == naming.name_key(card_id) for card in all_cards(cfg)):
+                raise naming.NamingError(f"card ID already exists: {card_id!r}")
+            text = "schema_version: 2\n" + text
+        jsonio.atomic_write(path, text)
     print(f"✓ {path}")
 
 
@@ -206,6 +216,12 @@ def cmd_doctor(cfg, args):
 
     line(not cfg.missing, "config", str(cfg.path))
     line(bool(cfg.video), "video section", "present" if cfg.video else "missing: run `init`")
+    try:
+        kinds = cfg.kinds
+        if cfg.taxonomy.enabled:
+            line(True, "taxonomy", f"{len(kinds)} source kinds; {catalog.migration_count(cfg)} migrated entries")
+    except (ConfigError, taxonomy.TaxonomyError) as error:
+        line(False, "taxonomy", str(error))
     line(cfg.cards_dir.is_dir(), "cards", f"{cfg.cards_dir} ({len(card_files(cfg)) if cfg.cards_dir.is_dir() else 0})")
     line(media.ffmpeg_ok(cfg.ffmpeg), "ffmpeg", cfg.ffmpeg)
     tracked, why = versioning.describe(cfg.path.parent)

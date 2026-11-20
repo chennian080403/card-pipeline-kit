@@ -609,7 +609,7 @@ def c_image_contract(ctx):
                                str(img / "project.yaml"), *args], cwd=str(img), capture_output=True, text=True, timeout=240)
     image("init")
     image("new-card", "I-01", "首帧图")
-    for image_card in (img / "cards").glob("I-01_*.yaml"):     # image validate wants something to draw
+    for image_card in (img / "cards").glob("I-01.yaml"):     # image validate wants something to draw
         data = yaml.safe_load(image_card.read_text(encoding="utf-8")) or {}
         data["action"] = "A quiet field at dawn."
         image_card.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -641,7 +641,7 @@ def c_image_contract(ctx):
         if origin.get("kind") != "image" or origin.get("card") != "I-01":
             p.append(f"take 没记首帧来源: {origin}")
     fb = ctx.run("feedback", "03-01", "reject", "--reason", "首帧手型不对", "--root-cause", "frame", "--take", "03-01_dry_1")
-    image_card = next((img / "cards").glob("I-01_*.yaml"), None) if (img / "cards").is_dir() else None
+    image_card = img / "cards/I-01.yaml" if (img / "cards/I-01.yaml").is_file() else None
     text = image_card.read_text(encoding="utf-8") if image_card else ""
     if "首帧手型不对" not in text or "视频 03-01" not in text:
         p.append(f"首帧问题没回写到生图卡: {brief(fb)}")
@@ -965,10 +965,111 @@ def c_init_image(ctx):
     return p
 
 
+def c_vocab(ctx):
+    """词表与 v2 视频写入：规范模型、待收导入、跨卡引用拒绝、台账与分级体检"""
+    project = ctx.tmp / "vocab-video"
+    project.mkdir()
+    config = project / "project.yaml"
+    def run(*args):
+        return ctx.run(*args, config=config)
+
+    def ok(*args):
+        proc = run(*args)
+        assert proc.returncode == 0, brief(proc)
+        return proc.stdout
+
+    def write(path, value):
+        path.write_text(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    ok("init")
+    vocab = yaml.safe_load((SKILL / "scripts/core/vocab.example.yaml").read_text())
+    vocab["categories"]["graphic"]["aliases"].remove("海报")
+    vocab["categories"].update(product={"label": "商品", "behavior": {"reference": True, "source": True},
+                                       "source_meta": {"section": "products", "as": "product"}},
+                               poster={"label": "海报", "behavior": {"deliverable": True}})
+    vocab["migrations"]["aliases"]["旧海报"] = "poster"
+    vocab["models"]["video"]["dry"]["aliases"] += ["local-render", "manual-render"]
+    write(project / "vocab.yaml", vocab)
+    raw = yaml.safe_load(config.read_text())
+    raw["taxonomy"] = "vocab.yaml"
+    video = raw["video"]
+    video["rules"].update(autosave=False, require_approval=False)
+    video["models"].update({"local-render": {"provider": "mock"}, "manual-render": {"provider": "handoff"}})
+    video["providers"]["entries"]["handoff"] = {"kind": "handoff"}
+    write(config, raw)
+    assert "taxonomy" in ok("doctor")
+    raw["sources"] = {"kinds": {"products": {"as": "wrong"}}}
+    write(config, raw)
+    conflict = run("doctor")
+    assert conflict.returncode and "conflicts with taxonomy" in conflict.stdout, brief(conflict)
+    del raw["sources"]
+    write(config, raw)
+    for cid in ("clip-one", "clip-two", "clip-three"):
+        ok("new-card", cid, "陶瓷杯")
+        path = project / "video-cards" / f"{cid}.yaml"
+        card = yaml.safe_load(path.read_text())
+        assert card["schema_version"] == 2 and card["id"] == cid
+        card.update(motion="Slow pan across the cup.", pack="旧海报/样片", mode="text")
+        write(path, card)
+        ok("validate", cid)
+    assert run("new-card", "clip_bad").returncode and run("new-card", "Clip-One").returncode
+    ok("generate", "clip-one", "--model", "local-render")
+    takes = project / "video-output/takes"
+    generated = takes / "clip-one__dry__001.mp4"
+    assert generated.is_file()
+    incoming = project / "incoming.mp4"
+    shutil.copy2(generated, incoming)
+    assert run("import", "clip-one", str(incoming)).returncode
+    assert run("import", "clip-one", str(incoming), "--model", "unknown").returncode
+    ok("import", "clip-one", str(incoming), "--model", "mock")
+    assert (takes / "clip-one__dry__002.mp4").is_file() and incoming.is_file()
+    assert run("pick", "clip-two", generated.name).returncode
+    assert run("pick", "clip-one", "clip-one__dry").returncode
+    ok("pick", "clip-one", generated.name)
+    ok("generate", "clip-three", "--model", "manual-render", "--no-wait")
+    ok("import", "clip-three", str(incoming))
+    meta = json.loads((takes / "clip-three__dry__001.json").read_text())
+    assert meta["naming_version"] == 2 and meta["canonical_model"] == "dry" and meta["card_id"] == "clip-three"
+
+    import refs
+    image = project / "image"
+    image.mkdir()
+    write(image / "project.yaml", {})
+    files = image / "output/candidates"
+    files.mkdir(parents=True)
+    for name in ("cup__dry__001.png", "cup__dry__002.png", "cup-detail__dry__001.png"):
+        (files / name).write_bytes(b"fixture")
+    linked = refs.ImageProject(image / "project.yaml")
+    assert linked.candidate("cup__dry__001", "cup").name == "cup__dry__001.png"
+    for prefix in ("cup__dry", "cup-detail__dry__001.png"):
+        try:
+            linked.candidate(prefix, "cup")
+        except refs.RefError:
+            pass
+        else:
+            raise AssertionError(f"accepted ambiguous or foreign candidate: {prefix}")
+
+    old = project / "video-cards/legacy_label.yaml"
+    write(old, {"id": "legacy", "motion": "Slow pan.", "pack": "旧分类/样片", "mode": "text"})
+    ok("validate", "legacy")
+    ok("index")
+    first = [(project / name).read_bytes() for name in ("_INDEX.md", ".catalog-index.json")]
+    ok("index")
+    assert first == [(project / name).read_bytes() for name in ("_INDEX.md", ".catalog-index.json")]
+    assert "warning:" in ok("check")
+    assert ok("find", generated.name).splitlines()[0].split("\t")[0].endswith(generated.name)
+    bad = yaml.safe_load((project / "video-cards/clip-two.yaml").read_text())
+    bad.update(id="wrong_id", pack="未知/样片")
+    write(project / "video-cards/clip-two.yaml", bad)
+    assert run("validate", "clip-two").returncode
+    assert run("check").returncode == 2
+    return []
+
+
 CHECKS = [c_init, c_card, c_generate, c_paid, c_unknown, c_collect, c_station, c_sync, c_segments, c_migration, c_post,
           c_register, c_handoff, c_image_contract, c_versions, c_core, c_styles, c_kinds,
           c_station_plugin, c_keyframes, c_validate_model, c_interrupt, c_concurrent, c_withdraw, c_assemble_bounds,
-          c_init_image]
+          c_init_image, c_vocab]
 
 
 def extra_checks(path):

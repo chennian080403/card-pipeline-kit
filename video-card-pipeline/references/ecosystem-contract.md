@@ -5,6 +5,13 @@
 
 ## 1. 一份配置，各取所需
 
+### 分类、命名与台账
+
+- `taxonomy: vocab.yaml` 相对 `project.yaml` 所在目录。分类按稳定 ID、显示名、别名和迁移映射解析；`storage` 指定落盘名。`behavior.reference` 决定参考区准入，`behavior.source` 与 `source_meta` 派生真源节名、`promote --as` 和引用角色。与手写的 `sources.kinds` 冲突时 `doctor` 报错；未引入词表的项目沿用原配置。
+- 启用词表或 `naming.strict_v2` 后，新卡写 `schema_version: 2`。卡 ID 和 YAML 主干一致，不含下划线；文件名用 Unicode NFC，查重忽略大小写，默认上限 120 个 UTF-8 字节。新候选和 take 写 `naming_version: 2`，名称为 `<卡ID>__<规范模型>__<三位序号>[_<特征>].<ext>`。序号按卡和规范模型跨批次及扩展名分配，旧卡沿用原 ID。已有文件和记录不改名。
+- 生图 job 保存 `run_dir`、`card_id`、`canonical_model`，视频 take 同步记录明确的卡 ID 与规范模型。生图本地素材库草稿存到 `草稿区/<storage>/<包名>/`，记录 `card_id`、`candidate_name`、`job_key`、`category_id`、`storage_category`、`pack_name`；同名异内容保留两份，以 `candidate_name` 追溯。
+- 两边都支持 `index`（生成 `_INDEX.md`、`.catalog-index.json`）、`check`（只读：旧条目告警，v2 违规退出 2）、`find <词...>`（文件名、卡 ID、模型和标签）。目录链接不跟随；`catalog.external_roots` 可收录外部目录的直接子项。
+
 ```
 project.yaml
   project: {name, root}        共用

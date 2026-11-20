@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yaml
 
-from core import library
+from core import library, naming
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 VIDEO_EXT = {".mp4", ".webm", ".mov"}
@@ -126,13 +126,41 @@ class ImageProject:
         path = self.output / "review" / f"{card_id}.json"
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
-    def candidate(self, name):
+    def candidate(self, name, card_id):
+        if Path(name).name != name:
+            raise RefError(f"invalid candidate name: {name!r}")
         directory = self.output / "candidates"
         exact = directory / name
-        if exact.is_file():
-            return exact
-        matches = sorted(p for p in directory.glob(f"{name}*") if p.suffix.lower() in IMAGE_EXT)
-        return matches[0] if matches else None
+        paths = [p for p in sorted(directory.glob("*")) if p.is_file() and p.suffix.lower() in IMAGE_EXT]
+        stems = [p for p in paths if p.stem == name]
+        matches = [exact] if exact in paths else stems or [p for p in paths if p.name.startswith(name)]
+        if len(matches) > 1:
+            raise RefError(f"ambiguous candidate {name!r}: {', '.join(p.name for p in matches)}")
+        if not matches:
+            return None
+        path = matches[0]
+        manifest = self.output / "manifest.json"
+        jobs = json.loads(manifest.read_text(encoding="utf-8")).get("jobs", {}) if manifest.is_file() else {}
+        owner = next((job.get("card_id") or key.split("|")[0] for key, job in jobs.items()
+                      if job.get("candidate") and Path(job["candidate"]).name == path.name), None)
+        if not owner:
+            try:
+                owner = naming.parse_media_name(path.name)["card_id"]
+            except naming.NamingError:
+                ids = {card_id}
+                for card_path in self.cards.glob("*.yaml"):
+                    if card_path.name.startswith("_"):
+                        continue
+                    try:
+                        card = yaml.safe_load(card_path.read_text(encoding="utf-8")) or {}
+                    except yaml.YAMLError:
+                        continue
+                    if isinstance(card, dict):
+                        ids.add(str(card.get("id") or card_path.stem.split("_", 1)[0]))
+                owner = next((cid for cid in sorted(ids, key=lambda x: (-len(x), x)) if path.name.startswith(cid + "_")), None)
+        if owner != card_id:
+            raise RefError(f"candidate {path.name} belongs to {owner or 'an unknown card'}, not {card_id}")
+        return path
 
     def card_exists(self, card_id):
         return any(self.cards.glob(f"{card_id}_*.yaml")) or (self.cards / f"{card_id}.yaml").is_file()
@@ -151,18 +179,18 @@ def _image_ref(cfg, value, label, role):
     card_id, _, candidate = body.partition("/")
     project = image_project(cfg)
     if candidate:
-        path = project.candidate(candidate)
+        path = project.candidate(candidate, card_id)
         if not path:
             raise RefError(f"{value}: candidate not found in {project.output / 'candidates'}")
     else:
         picks = project.review(card_id).get("pick") or []
         if not picks:
             raise RefError(f"{value}: image card {card_id} has no pick yet (pick it in the image pipeline first)")
-        path = project.candidate(picks[0])
+        path = project.candidate(picks[0], card_id)
         if not path:
             raise RefError(f"{value}: picked candidate {picks[0]} is missing on disk")
         candidate = picks[0]
-    return _ref(path, label, role, {"kind": "image", "card": card_id, "candidate": Path(str(candidate)).stem,
+    return _ref(path, label, role, {"kind": "image", "card": card_id, "candidate": path.stem,
                                     "project": str(project.path)})
 
 
@@ -182,10 +210,12 @@ def _take_ref(cfg, value, label, role):
     body = value[len("take:"):]
     _card, _, take = body.partition("/")
     take = take or _card
-    matches = sorted(cfg.takes_dir.glob(f"{take}*.mp4"))
-    if not matches:
-        raise RefError(f"{value}: take not found in {cfg.takes_dir}")
-    return _ref(matches[0], label, role, {"kind": "take", "take": matches[0].stem})
+    from store import load_take
+    try:
+        meta = load_take(cfg, take, _card if "/" in body else None)
+    except SystemExit as error:
+        raise RefError(f"{value}: {error}") from error
+    return _ref(Path(meta["file"]), label, role, {"kind": "take", "take": meta["name"]})
 
 
 def resolve(cfg, value, label, role=None):

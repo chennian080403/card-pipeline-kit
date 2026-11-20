@@ -127,7 +127,7 @@
 | 这一镜独有的动作、站位、表情 | 卡里的 `action` / `composition` / `hard_rules` |
 | 局部细节参考（皮肤、面料、文字） | 卡的 `refs.files`，或真源里的 face / 细节图 |
 
-短效路线：`inspire add` 存参考图 → 反推七字段 → 精简版当 `--idea` 试几张（`sketch`）→ 定下后 `promote` 成真源或模板。
+短效路线：只有用户明确点名收录的审美参考才走 `inspire add --pack <人物|道具|场景|风格>/<子组> --approved "<用户原话>"` 进参考区（临时只做反推或单次参考输入直接读本地文件即可，不必入库；评测图、超分图、模板试跑及外部平台成品一律不进参考区，放 `output/` 独立评测目录配对比页）→ 反推七字段 → 精简版当 `--idea` 试几张（`sketch`）→ 定下后 `promote` 成真源或模板。
 
 长效路线：卡里勾 `example/03_five_s#完整结构` 和 `example/04_constraints#完整`，`refs` 指局部参考图，`hard_rules` 写这一镜的禁止项。
 
