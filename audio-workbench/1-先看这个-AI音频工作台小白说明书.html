@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI 音频工作台 · 小白说明书（丢给 AI 自动装成 Skill）</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 模板 A（工具包卡片流主力）：单文件、零外网资源、自动深浅色、手机 375px 零横向滚动 */
+:root{
+  --bg:#f4f6f8; --paper:#ffffff; --ink:#17212b; --muted:#5a6875; --line:#dde4eb;
+  --accent:#0b6e7f; --accent-soft:#e3f3f5;
+  --orange:#ea580c; --orange-soft:#fff1e8;
+  --red:#d92d20; --red-soft:#fdeceb;
+  --ok:#16794c; --ok-soft:#e6f6ee;
+  --say:#eef3f7;
+  --f-body:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",system-ui,sans-serif;
+  --f-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e151b; --paper:#151f28; --ink:#e5edf4; --muted:#97a6b3; --line:#263440;
+  --accent:#4ac2d2; --accent-soft:#15343b;
+  --orange:#fb923c; --orange-soft:#352113;
+  --red:#f87171; --red-soft:#3a1c1a;
+  --ok:#4cc38a; --ok-soft:#142f22;
+  --say:#1c2934; color-scheme:dark}}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15.5px;line-height:1.7}
+.wrap{max-width:780px;margin:0 auto;padding:24px 16px 64px;display:flex;flex-direction:column;gap:20px}
+
+/* 顶部 Hero */
+.hero{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:22px 20px}
+.badges{display:flex;flex-wrap:wrap;gap:6px}
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.badge.free{background:var(--ok-soft);color:var(--ok)}
+.badge.sys{background:var(--orange-soft);color:var(--orange)}
+h1{font-size:clamp(24px,6vw,34px);font-weight:900;line-height:1.22;margin:12px 0 8px}
+.lede{margin:0;color:var(--muted);font-size:15.5px}
+.goal-bar{margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--orange-soft);color:var(--ink);font-size:14px;border-left:4px solid var(--orange)}
+.goal-bar + .goal-bar{margin-top:8px}
+
+/* 通用卡片 */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px 18px;min-width:0}
+h2{font-size:20px;font-weight:800;margin:0 0 12px;line-height:1.3}
+h3{font-size:16.5px;font-weight:700;margin:0 0 8px;line-height:1.35}
+p{margin:0 0 10px;overflow-wrap:break-word}
+p:last-child{margin-bottom:0}
+.muted{color:var(--muted);font-size:14px}
+
+/* 对比/亮点网格 */
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+@media (max-width:600px){.grid-2{grid-template-columns:minmax(0,1fr)}}
+.box{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.box b{display:block;font-size:14.5px;margin-bottom:3px}
+.box span{font-size:13.5px;color:var(--muted)}
+.box.good{border-left:4px solid var(--ok)}
+.box.bad{border-left:4px solid var(--muted)}
+
+/* 准备项（3列，手机自动单列） */
+.prep{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:600px){.prep{grid-template-columns:minmax(0,1fr)}}
+.prep-box{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+.prep-box b{display:block;font-size:14.5px;margin-bottom:3px}
+.prep-box span{font-size:13.5px;color:var(--muted)}
+
+/* 步骤列表 */
+.steps{display:flex;flex-direction:column;gap:14px}
+.step{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.step-head{display:flex;align-items:flex-start;gap:10px}
+.num{flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:var(--orange);color:#fff;font-weight:800;font-size:14px;display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+.step-title{flex:1;min-width:0}
+.step-title h3{margin:0 0 2px;font-size:16.5px}
+.who-tag{display:inline-block;font-size:12px;font-weight:700;padding:1px 8px;border-radius:6px;margin-top:2px}
+.who-tag.ai{background:var(--accent-soft);color:var(--accent)}
+.who-tag.you{background:var(--orange-soft);color:var(--orange)}
+
+/* 提示词气泡 + 一键复制 */
+.prompt-box{position:relative;background:var(--say);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.prompt-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.prompt-lbl{font-size:12px;font-weight:700;color:var(--accent);letter-spacing:.03em}
+.copy-btn{flex:0 0 auto;font-family:var(--f-body);font-size:12.5px;font-weight:700;padding:4px 12px;border-radius:8px;border:1px solid var(--accent);background:var(--paper);color:var(--accent);cursor:pointer}
+.copy-btn:active{transform:scale(.97)}
+.copy-btn.done{background:var(--ok);border-color:var(--ok);color:#fff}
+.prompt-txt{font-size:14.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word;color:var(--ink)}
+
+/* 验收提示 */
+.expect{background:var(--ok-soft);color:var(--ok);border-radius:10px;padding:10px 12px;font-size:14px;font-weight:500}
+
+/* 停下来等你 / 卡住了 */
+.list-orange{display:grid;gap:12px}
+.o-item{background:var(--bg);border:1px solid var(--line);border-left:4px solid var(--orange);border-radius:10px;padding:14px}
+.o-item b{display:block;font-size:15px;margin-bottom:4px}
+.o-item p{font-size:14px;color:var(--muted);margin:0 0 8px}
+.o-item p:last-child{margin-bottom:0}
+
+/* 折叠兜底 */
+details.fallback{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px}
+details.fallback summary{cursor:pointer;font-weight:700;color:var(--orange);list-style:none}
+details.fallback summary::-webkit-details-marker{display:none}
+details.fallback .fb-body{margin-top:8px;color:var(--muted);line-height:1.65}
+
+.foot{text-align:center;font-size:13px;color:var(--muted);padding-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="badges">
+      <span class="badge">小白 60% 够用版</span>
+      <span class="badge free">本地活全免费 · 丢给 AI 自动装</span>
+      <span class="badge sys">Mac / Windows 都能装</span>
+    </div>
+    <h1>AI 音频工作台 · 小白说明书</h1>
+    <p class="lede">装好之后，你只会说人话：剪一段、把这几段拼起来、降个噪、音量调成短视频能用的、把视频里的说话声单独抽出来 —— 这些全在本机免费做完。要原创配乐时再加一句，AI 先给你看价格、你批准了才生成。</p>
+    <div class="goal-bar"><b>核心用法：</b>不用解压、不用敲命令、不用看代码。把整个压缩包（或解压后的文件夹）丢给你的 AI，复制下面那句提示词发出去，它自己读文档、装好、跑测试。</div>
+    <div class="goal-bar"><b>记住一条就够：</b>以后你永远不需要碰 ffmpeg 命令和参数，谁让你手敲命令、报参数，直接说「你来做，我只要结果」。</div>
+  </header>
+
+  <section class="card">
+    <h2>一、这是什么，装完能看到什么效果</h2>
+    <p>音频活翻来覆去就那几件：剪一段、几段拼一条、转个格式、把音量统一到短视频平台能用的响度、去掉开头结尾的静音、降掉底噪、把视频里的声音单独提出来。这些靠系统自带的功能做不到，得用免费的 ffmpeg —— 但它那堆参数没人想背。这个包就是把参数藏起来，让 AI 给你造一个「一条命令干一件事」的工作台：你说一句，它跑一条，原文件不动，结果单独成一个新文件。</p>
+    <div class="grid-2">
+      <div class="box bad">
+        <b>没装之前</b>
+        <span>剪音频靠来回拖、导出还挑格式；视频想单独要声音得先转格式；五段素材音量忽大忽小，发出去观众自己调音量；降噪要么买软件，要么不知道从哪下手。</span>
+      </div>
+      <div class="box good">
+        <b>装好之后</b>
+        <span>一句「把这段视频的声音提出来、再统一成短视频能用的响度」，AI 一条条跑完把文件递给你，还报清每段多长、什么格式。要配乐再说一句，它先把请求和大概价格摆给你看，你点头才生成。</span>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="box good">
+        <b>现在真能用的（本地 · 0 元）</b>
+        <span>查时长格式、剪、拼、转格式、统一响度、去静音、降噪、从视频提音轨。作者本机都跑通过，还带一份不联网、不花钱的自动自检；素材库登记、审核记录也一起装好了。</span>
+      </div>
+      <div class="box">
+        <b>要外接、要花钱（有条件才用）</b>
+        <span>配乐（Google Lyria）要自备平台账号和 API Key，按次付费：作者用的转售平台约 ¥0.30 一首、40–50 秒出一首，价格以平台为准。作者本机真跑过多次；但从零照这套文档装好再真跑一遍还没做过（要付费，等主人批）。</span>
+      </div>
+    </div>
+    <p class="muted" style="margin-top:10px">写实话：配音（文字转语音）和音效这两块还没接真平台，现在只能先留个接口、用不花钱的占位方式跑通流程。这两样别指望马上出成品，其余本地活都是真跑通的。</p>
+  </section>
+
+  <section class="card">
+    <h2>二、动手前只需准备</h2>
+    <div class="prep">
+      <div class="prep-box">
+        <b>1. 一台 Mac 或 Windows 电脑</b>
+        <span>电脑上要有 Python 3.9 以上（Mac 一般自带）。ffmpeg 你不用管，AI 负责装，免费。</span>
+      </div>
+      <div class="prep-box">
+        <b>2. 一个能改文件、能跑命令的 AI</b>
+        <span>Codex / WorkBuddy / Pi / Claude Code 这类都行。它要能装东西、能跑命令，装成 Skill 后以后能自动被唤起。</span>
+      </div>
+      <div class="prep-box">
+        <b>3. 额外准备（按需）</b>
+        <span>只做本地剪拼降噪：什么都不用准备、0 费用。要配乐：一个能用的 Lyria 平台账号加 API Key，你自己设进环境变量。</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>三、怎么装：复制这句话发给你的 AI</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-head">
+          <span class="num">1</span>
+          <div class="step-title">
+            <h3>把压缩包或文件夹拖给 AI，再发下面这句</h3>
+            <span class="who-tag ai">装、配置、自检、排错全由 AI 完成</span>
+          </div>
+        </div>
+        <div class="prompt-box">
+          <div class="prompt-top">
+            <span class="prompt-lbl">首条安装提示词</span>
+            <button class="copy-btn" type="button">复制提示词</button>
+          </div>
+          <div class="prompt-txt">我发给你一个压缩包，是「AI 音频工作台」安装包。请自己解压，先完整读里面的「2-发给你的AI-让它照着做.md」，再照着它帮我在我的电脑上装好：
+1. 先检查我的系统、有没有 ffmpeg 和 ffprobe、Python 版本够不够，缺什么你装上（用系统自带的包管理器装）。
+2. 按文档写这个音频命令行工具，一条命令干一件事；我的 AI 支持 Skill 就装成一个 Skill，不支持就放到固定位置、让我以后一句话就能唤起它。
+3. 装完在不花钱的前提下自己跑一遍自检：用测试音、占位的假模型、临时素材库，把跑出来的结果给我看。
+
+三条要求，请一直照做：
+第一，以后我只说人话，你不要让我敲 ffmpeg 命令、也别把参数甩给我，参数你自己定自己跑。
+第二，真正花钱的配乐生成之前必须先问我，我用自己的话同意了才发；试链路只许用不花钱的方式。
+第三，密钥我自己设进环境变量，你不要打印它的值、也不要写进任何文件。
+
+需要我登录、授权、填密码、拍板的地方才停下来问我，其他你自己做完。</div>
+        </div>
+        <div class="expect">装完验收标准：AI 回你「自检全过」（本地命令 + 素材库登记、审核、定稿这套流程都跑了一遍，还故意用假批准试过被拒）。然后你丢一个自己的视频或录音给它，说「把声音提出来、剪中间 5 秒、统一成短视频响度」，三个文件都出来、都能播、时长对得上，就算真装好了。</div>
+      </div>
+
+      <div class="step">
+        <div class="step-head">
+          <span class="num">2</span>
+          <div class="step-title">
+            <h3>装好以后，日常这么喊它</h3>
+            <span class="who-tag you">只说人话，命令名随你定，你不用记</span>
+          </div>
+        </div>
+        <div class="prompt-box">
+          <div class="prompt-top">
+            <span class="prompt-lbl">日常调用示例（可照抄，换成你自己的文件名）</span>
+            <button class="copy-btn" type="button">复制提示词</button>
+          </div>
+          <div class="prompt-txt">把这几个素材按顺序拼成一条，开头结尾多余的静音去掉。
+把这段录像里的说话声单独提出来，音量统一成发短视频的那种。
+这段录音底噪有点大，轻轻降一下噪，别把人声弄闷。
+给这个 30 秒的片头出一首古风纯音乐，先给我看你要发出去的请求和大概价格。
+这首我听着可以，定稿，署我的名字。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>四、哪些时候 AI 会停下来等你</h2>
+    <p class="muted">这几件事涉及花钱、署名和你的耳朵，AI 不会替你做，做到这里会停下来问你 —— 停下是正常的，不是卡住了。</p>
+    <div class="list-orange" style="margin-top:10px">
+      <div class="o-item">
+        <b>1. 花钱的配乐：先看请求和价格，再用你自己的话批准</b>
+        <p>它会把要发出去的请求先给你看、说清这次多少钱；你回一句人话（比如「同意出一首」）它才真发，并把这句原话记进批准记录。回「…」「OK」「批准」这种太短或占位的会被脚本直接拒掉，所以别只回一个字。真发出去失败时它不会偷偷重发（那时可能已经扣过钱），会把报错原样给你，你先去平台账单看一眼。</p>
+      </div>
+      <div class="o-item">
+        <b>2. 结论和定稿：只认你的署名</b>
+        <p>好不好听、留不留，AI 只能照抄你说的话，不能自己写「通过」；用 AI 的名字去标定稿会被拒。你说「可以，定稿」它才标成定稿，在那之前都是草稿。</p>
+      </div>
+      <div class="o-item">
+        <b>3. 验收听效果：参数它能报，听感只能你来判</b>
+        <p>降噪降得狠不狠、响度合不合适，脚本只会打出时长、编码、采样率、声道这些数字，听感得你戴耳机过一遍。行就说「行」，不行就说「再降一点」或「闷了，轻一点」，它会重跑一版。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>五、卡住了怎么办</h2>
+    <div class="list-orange">
+      <div class="o-item">
+        <b>卡点 1：它说没有 ffmpeg / ffprobe，或者装的时候报错</b>
+        <p>多半是包管理器没装或没网。别自己去下绿色版、乱放路径，让 AI 用系统自带的方式装（Mac 走 Homebrew，Windows 走 winget），装完把版本号打出来给你看。</p>
+        <div class="prompt-box">
+          <div class="prompt-top">
+            <span class="prompt-lbl">排错提示词</span>
+            <button class="copy-btn" type="button">复制提示词</button>
+          </div>
+          <div class="prompt-txt">提示缺 ffmpeg 或 ffprobe。请回到 2 号文档「先查清用户电脑」那一节重新检查，用系统包管理器装好，然后把版本号打给我看；装不上就别硬来，告诉我卡在哪一步、缺什么。</div>
+        </div>
+      </div>
+
+      <div class="o-item">
+        <b>卡点 2：降完噪人声发闷，或者该去的静音没去掉</b>
+        <p>发闷是降噪强度太狠，往低调（默认那档就够轻）。静音去不掉通常是录音底噪太大、和静音分不开，把判断静音的阈值放宽（文档里写的是从 -45dB 调到 -35dB 再试）。两样都别自己动手改，交给 AI。</p>
+        <div class="prompt-box">
+          <div class="prompt-top">
+            <span class="prompt-lbl">排错提示词</span>
+            <button class="copy-btn" type="button">复制提示词</button>
+          </div>
+          <div class="prompt-txt">这版降噪后人声发闷（或者：开头结尾的静音还在）。请按 2 号文档「实现细节」里的办法调小降噪强度（或放宽去静音的阈值）再出一版，然后把新旧两版的关键参数和时长都报给我，我听完再定。</div>
+        </div>
+      </div>
+
+      <div class="o-item">
+        <b>卡点 3：配乐等了两三分钟没动静，或者报超时、扣了钱没拿到文件</b>
+        <p>这类平台的配乐接口是一次请求等到出的（同步），实测有 2 分 50 秒才返回的，等几分钟不算坏。超时千万不要让它重发 —— 上游很可能已经出曲扣费了，先把完整报错存下来，去平台账单核对。</p>
+        <div class="prompt-box">
+          <div class="prompt-top">
+            <span class="prompt-lbl">排错提示词</span>
+            <button class="copy-btn" type="button">复制提示词</button>
+          </div>
+          <div class="prompt-txt">这次配乐请求超时（或报错了），先别重发。请把完整回包和报错原文存下来给我，然后告诉我：这次是不是可能已经扣费、我该去平台的哪个页面查账单。下次再试之前先算清价格再问我一次。</div>
+        </div>
+      </div>
+
+      <div class="o-item">
+        <b>卡点 4：出的配乐不是你要的长度或风格</b>
+        <p>时长写进描述里也不准，实测写「约 30 秒」出过 57 秒和 66 秒；要卡点就先出、再用剪的命令切。风格不对别硬改描述一堆形容词，把「用途 + 乐器 + 情绪起伏」说清最有用。</p>
+        <div class="prompt-box">
+          <div class="prompt-top">
+            <span class="prompt-lbl">排错提示词</span>
+            <button class="copy-btn" type="button">复制提示词</button>
+          </div>
+          <div class="prompt-txt">这首长度和风格都不是我要的。长度先不管，把这版剪成我要的那几秒；风格你按「用途、风格流派、乐器、情绪起伏」重写一版描述，先给我看请求和价格，我同意了再生成。</div>
+        </div>
+      </div>
+    </div>
+    <details class="fallback" style="margin-top:12px">
+      <summary>想看他底层到底在干什么（不用自己读）</summary>
+      <div class="fb-body">同目录的「2-发给你的AI-让它照着做.md」里有每条命令对应的处理方式、配乐请求怎么写、素材库和审核记录长什么样。你不需要看懂，哪一步想弄清，把这段话丢给 AI：「用大白话给我讲一遍你刚才这条命令做了什么、为什么这么定参数。」</div>
+    </details>
+  </section>
+
+  <footer class="foot">
+    单文件离线说明书 · 本地剪拼降噪全免费，配乐按次付费需自备 Key · 细节见同目录的 2 号文档
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  document.querySelectorAll('.copy-btn').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var box = btn.closest('.prompt-box').querySelector('.prompt-txt');
+      var txt = box.textContent;
+      var ok = function(){
+        btn.textContent = '已复制';
+        btn.classList.add('done');
+        setTimeout(function(){
+          btn.textContent = '复制提示词';
+          btn.classList.remove('done');
+        }, 1500);
+      };
+      var fallback = function(){
+        var r = document.createRange();
+        r.selectNodeContents(box);
+        var s = getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        btn.textContent = '已选中，按复制';
+      };
+      try{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(txt).then(ok, fallback);
+        } else { fallback(); }
+      }catch(e){ fallback(); }
+    });
+  });
+})();
+</script>
+</body>
+</html>

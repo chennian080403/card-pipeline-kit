@@ -52,6 +52,11 @@ bash 一键演示.sh                     # 在 ./演示项目 里从建卡跑到
 2. 照 quickstart 建你自己的项目，先用模拟出图跑通，再接真供应商。
 3. 把 `roles.example.md` 复制成 `roles.md`，填你用的 AI 工具。只用一个 AI 可以不填。
 
+
+## 新增：本地音频工作台（`audio-workbench/`）
+
+配套补齐音频后处理闭环：基于 `ffmpeg` 做剪辑、拼接、转码、响度统一（-16/-14 LUFS）、去静音、降噪与视频提音轨，并支持接入 Google Lyria 配乐与素材库登记（花钱前必须人批准）。打开 `audio-workbench/1-先看这个-AI音频工作台小白说明书.html`，或把 `audio-workbench/2-发给你的AI-让它照着做.md` 交给你的 AI 自动搭好。
+
 ## 联系作者
 
 用着有问题、想交流做法，或者想要定制，加我微信：**CHYS043**（备注「Skill」）。
